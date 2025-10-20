@@ -300,9 +300,13 @@ sources += [
         "src/core/windows/version.rc",
         "src/gpu/d3d11/compile_shaders.bat",
         "src/gpu/d3d12/compile_shaders.bat",
+        "src/gpu/d3d12/D3D_Blit.hlsl",
         "src/gpu/d3d12/compile_shaders_xbox.bat",
         "src/render/direct3d/compile_shaders.bat",
         "src/render/direct3d/D3D9_PixelShader_YUV.hlsl",
+        "src/render/direct3d/D3D9_PixelShader_Palette.hlsli",
+        "src/render/direct3d/D3D9_PixelShader_Palette_Nearest.hlsl",
+        "src/render/direct3d/D3D9_PixelShader_Palette_Linear.hlsl",
         "src/render/direct3d11/compile_shaders.bat",
         "src/render/direct3d11/D3D11_PixelShader_Advanced.hlsl",
         "src/render/direct3d11/D3D11_PixelShader_Colors.hlsl",
@@ -323,6 +327,14 @@ sources += [
         "src/render/vulkan/VULKAN_PixelShader_Advanced.hlsl",
         "src/render/vulkan/VULKAN_PixelShader_Colors.hlsl",
         "src/render/vulkan/VULKAN_PixelShader_Common.hlsli",
+        "src/render/gpu/shaders/texture_rgba.frag.hlsl",
+        "src/render/gpu/shaders/texture_advanced.frag.hlsl",
+        "src/render/gpu/shaders/linepoint.vert.hlsl",
+        "src/render/gpu/shaders/tri_texture.vert.hlsl",
+        "src/render/gpu/shaders/common.frag.hlsli",
+        "src/render/gpu/shaders/tri_color.vert.hlsl",
+        "src/render/gpu/shaders/texture_rgb.frag.hlsl",
+        "src/render/gpu/shaders/color.frag.hlsl",
     ]
 #endif
 
