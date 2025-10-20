@@ -1136,6 +1136,12 @@ void X11_HandleButtonPress(SDL_VideoDevice *_this, SDL_WindowData *windowdata, S
     }
 
     if (X11_IsWheelEvent(button, &xticks, &yticks)) {
+        // Shaft patch: add multiplier to scroll events
+        // The multiplier is taken from the Chromium source
+        // (ui/events/x/events_x_utils.cc).
+        const int kScrollOffsetMultiplier = 53;
+        xticks *= kScrollOffsetMultiplier;
+        yticks *= kScrollOffsetMultiplier;
         SDL_SendMouseWheel(timestamp, window, mouseID, (float)-xticks, (float)yticks, SDL_MOUSEWHEEL_NORMAL);
     } else {
         bool ignore_click = false;

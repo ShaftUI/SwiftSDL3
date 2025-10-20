@@ -577,8 +577,9 @@ void Cocoa_HandleMouseEvent(SDL_VideoDevice *_this, NSEvent *event)
         }
     }
 
-    deltaX = [event deltaX];
-    deltaY = [event deltaY];
+    // Shaft patch: use scrollingDeltaX/Y instead of deltaX/Y for trackpad scrolling
+    deltaX = [event scrollingDeltaX]; 
+    deltaY = [event scrollingDeltaY];
 
     if (seenWarp) {
         deltaX += (lastMoveX - data->lastWarpX);

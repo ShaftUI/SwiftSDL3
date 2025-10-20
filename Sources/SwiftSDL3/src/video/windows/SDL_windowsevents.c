@@ -1453,7 +1453,8 @@ LRESULT CALLBACK WIN_WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     {
         if (!data->videodata->raw_mouse_enabled) {
             short amount = GET_WHEEL_DELTA_WPARAM(wParam);
-            float fAmount = (float)amount / WHEEL_DELTA;
+            // Shaft patch: remove "/ WHEEL_DELTA" to get the original value
+            float fAmount = (float)amount; // / WHEEL_DELTA
             if (msg == WM_MOUSEWHEEL) {
                 SDL_SendMouseWheel(WIN_GetEventTimestamp(), data->window, SDL_GLOBAL_MOUSE_ID, 0.0f, fAmount, SDL_MOUSEWHEEL_NORMAL);
             } else {

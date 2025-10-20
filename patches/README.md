@@ -13,9 +13,6 @@ This directory contains custom patches that have been applied to the SDL3 source
 3. **0003-commit-a56a797.patch** - Linux scroll
    - Commit: a56a797f584de4e4cf3470f2e2dbf2e7fba6edf0
 
-4. **0004-commit-f20e32b.patch** - Shaft patch: use scrollingDeltaX/Y
-   - Commit: f20e32b3607450dd90d002abd66cfddd92679d6e
-
 5. **0005-add-modulemap.patch** - Add Swift module map for SDL3
    - Critical: Required for Swift Package Manager integration
    - Creates the module.modulemap file that exposes SDL3 C API to Swift
@@ -29,7 +26,6 @@ After updating the SDL3 source code, apply these patches in order:
 git apply patches/0001-commit-30c6977.patch
 git apply patches/0002-commit-e32d317.patch
 git apply patches/0003-commit-a56a797.patch
-git apply patches/0004-commit-f20e32b.patch
 git apply patches/0005-add-modulemap.patch
 ```
 
