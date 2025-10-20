@@ -1,0 +1,23 @@
+commit a56a797f584de4e4cf3470f2e2dbf2e7fba6edf0
+Author: xuty <xty50337@hotmail.com>
+Date:   Mon Nov 25 23:28:11 2024 +0800
+
+    Linux scroll
+
+diff --git a/Sources/SwiftSDL3/src/video/x11/SDL_x11events.c b/Sources/SwiftSDL3/src/video/x11/SDL_x11events.c
+index 562a335..52b5ce1 100644
+--- a/Sources/SwiftSDL3/src/video/x11/SDL_x11events.c
++++ b/Sources/SwiftSDL3/src/video/x11/SDL_x11events.c
+@@ -902,6 +902,12 @@ void X11_HandleButtonPress(SDL_VideoDevice *_this, SDL_WindowData *windowdata, S
+     }
+ 
+     if (X11_IsWheelEvent(display, button, &xticks, &yticks)) {
++        // Shaft patch: add multiplier to scroll events
++        // The multiplier is taken from the Chromium source
++        // (ui/events/x/events_x_utils.cc).
++        const int kScrollOffsetMultiplier = 53;
++        xticks *= kScrollOffsetMultiplier;
++        yticks *= kScrollOffsetMultiplier;
+         SDL_SendMouseWheel(0, window, mouseID, (float)-xticks, (float)yticks, SDL_MOUSEWHEEL_NORMAL);
+     } else {
+         bool ignore_click = false;

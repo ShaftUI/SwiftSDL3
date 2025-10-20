@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -69,7 +69,7 @@ int sdl_psp_setup_callbacks(void)
     return thid;
 }
 
-int SDL_RunApp(int argc, char* argv[], SDL_main_func mainFunction, void * reserved)
+int SDL_RunApp(int argc, char *argv[], SDL_main_func mainFunction, void * reserved)
 {
     (void)reserved;
     sdl_psp_setup_callbacks();

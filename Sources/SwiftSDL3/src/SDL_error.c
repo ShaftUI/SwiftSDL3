@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -19,6 +19,8 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 #include "SDL_internal.h"
+
+#include "stdlib/SDL_vacopy.h"
 
 // Simple error handling in SDL
 
@@ -61,10 +63,12 @@ bool SDL_SetErrorV(SDL_PRINTF_FORMAT_STRING const char *fmt, va_list ap)
             }
         }
 
-        if (SDL_GetLogPriority(SDL_LOG_CATEGORY_ERROR) <= SDL_LOG_PRIORITY_DEBUG) {
-            // If we are in debug mode, print out the error message
-            SDL_LogDebug(SDL_LOG_CATEGORY_ERROR, "%s", error->str);
-        }
+// Enable this if you want to see all errors printed as they occur.
+// Note that there are many recoverable errors that may happen internally and
+// can be safely ignored if the public API doesn't return an error code.
+#if 0
+        SDL_LogError(SDL_LOG_CATEGORY_ERROR, "%s", error->str);
+#endif
     }
 
     return false;

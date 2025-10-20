@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -59,6 +59,13 @@ static void SDL_TARGETING("sse") SDL_FillSurfaceRect##bpp##SSE(Uint8 *pixels, in
 { \
     int i, n; \
     Uint8 *p = NULL; \
+  \
+    /* If the number of bytes per row is equal to the pitch, treat */ \
+    /* all rows as one long continuous row (for better performance) */ \
+    if ((w) * (bpp) == pitch) { \
+        w = w * h; \
+        h = 1; \
+    } \
  \
     SSE_BEGIN; \
  \
@@ -231,7 +238,7 @@ static void SDL_FillSurfaceRect4(Uint8 *pixels, int pitch, Uint32 color, int w, 
  */
 bool SDL_FillSurfaceRect(SDL_Surface *dst, const SDL_Rect *rect, Uint32 color)
 {
-    if (!SDL_SurfaceValid(dst)) {
+    CHECK_PARAM(!SDL_SurfaceValid(dst)) {
         return SDL_InvalidParamError("SDL_FillSurfaceRect(): dst");
     }
 
@@ -255,22 +262,21 @@ bool SDL_FillSurfaceRects(SDL_Surface *dst, const SDL_Rect *rects, int count, Ui
     void (*fill_function)(Uint8 * pixels, int pitch, Uint32 color, int w, int h) = NULL;
     int i;
 
-    if (!SDL_SurfaceValid(dst)) {
+    CHECK_PARAM(!SDL_SurfaceValid(dst)) {
         return SDL_InvalidParamError("SDL_FillSurfaceRects(): dst");
     }
 
-    // Nothing to do
-    if (dst->w == 0 || dst->h == 0) {
-        return true;
+    CHECK_PARAM(!rects) {
+        return SDL_InvalidParamError("SDL_FillSurfaceRects(): rects");
     }
 
-    // Perform software fill
-    if (!dst->pixels) {
+    if (!dst->pixels && SDL_MUSTLOCK(dst)) {
         return SDL_SetError("SDL_FillSurfaceRects(): You must lock the surface");
     }
 
-    if (!rects) {
-        return SDL_InvalidParamError("SDL_FillSurfaceRects(): rects");
+    // Nothing to do
+    if (dst->w == 0 || dst->h == 0 || !dst->pixels) {
+        return true;
     }
 
     /* This function doesn't usually work on surfaces < 8 bpp

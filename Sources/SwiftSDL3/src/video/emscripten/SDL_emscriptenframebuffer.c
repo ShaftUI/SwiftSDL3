@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -30,7 +30,7 @@
 bool Emscripten_CreateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *window, SDL_PixelFormat *format, void **pixels, int *pitch)
 {
     SDL_Surface *surface;
-    const SDL_PixelFormat surface_format = SDL_PIXELFORMAT_XBGR8888;
+    const SDL_PixelFormat surface_format = SDL_PIXELFORMAT_RGBA32;
     int w, h;
 
     // Free the old framebuffer surface
@@ -78,7 +78,7 @@ bool Emscripten_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *wind
         if (!Module['SDL3']) Module['SDL3'] = {};
         var SDL3 = Module['SDL3'];
         if (SDL3.ctxCanvas !== canvas) {
-            SDL3.ctx = Module['createContext'](canvas, false, true);
+            SDL3.ctx = Browser.createContext(canvas, false, true);
             SDL3.ctxCanvas = canvas;
         }
         if (SDL3.w !== w || SDL3.h !== h || SDL3.imageCtx !== SDL3.ctx) {
@@ -89,54 +89,13 @@ bool Emscripten_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *wind
         }
         var data = SDL3.image.data;
         var src = pixels / 4;
-        var dst = 0;
-        var num;
 
         if (SDL3.data32Data !== data) {
             SDL3.data32 = new Int32Array(data.buffer);
-            SDL3.data8 = new Uint8Array(data.buffer);
             SDL3.data32Data = data;
         }
         var data32 = SDL3.data32;
-        num = data32.length;
-        // logically we need to do
-        //      while (dst < num) {
-        //          data32[dst++] = HEAP32[src++] | 0xff000000
-        //      }
-        // the following code is faster though, because
-        // .set() is almost free - easily 10x faster due to
-        // native SDL_memcpy efficiencies, and the remaining loop
-        // just stores, not load + store, so it is faster
-        data32.set(HEAP32.subarray(src, src + num));
-        var data8 = SDL3.data8;
-        var i = 3;
-        var j = i + 4*num;
-        if (num % 8 == 0) {
-            // unrolling gives big speedups
-            while (i < j) {
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-            }
-         } else {
-            while (i < j) {
-              data8[i] = 0xff;
-              i = i + 4 | 0;
-            }
-        }
+        data32.set(HEAP32.subarray(src, src + data32.length));
 
         SDL3.ctx.putImageData(SDL3.image, 0, 0);
     }, surface->w, surface->h, surface->pixels, data->canvas_id);

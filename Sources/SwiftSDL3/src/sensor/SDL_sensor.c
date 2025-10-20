@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -57,11 +57,11 @@ static int SDL_sensors_locked;
 static bool SDL_sensors_initialized;
 static SDL_Sensor *SDL_sensors SDL_GUARDED_BY(SDL_sensor_lock) = NULL;
 
-#define CHECK_SENSOR_MAGIC(sensor, result)                  \
-    if (!SDL_ObjectValid(sensor, SDL_OBJECT_TYPE_SENSOR)) { \
-        SDL_InvalidParamError("sensor");                    \
-        SDL_UnlockSensors();                                \
-        return result;                                      \
+#define CHECK_SENSOR_MAGIC(sensor, result)                          \
+    CHECK_PARAM(!SDL_ObjectValid(sensor, SDL_OBJECT_TYPE_SENSOR)) { \
+        SDL_InvalidParamError("sensor");                            \
+        SDL_UnlockSensors();                                        \
+        return result;                                              \
     }
 
 bool SDL_SensorsInitialized(void)

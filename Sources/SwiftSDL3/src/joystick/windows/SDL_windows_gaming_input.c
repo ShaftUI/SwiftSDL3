@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -69,6 +69,7 @@ typedef PCWSTR(WINAPI *WindowsGetStringRawBuffer_t)(HSTRING string, UINT32 *leng
 
 static struct
 {
+    bool ro_initialized;
     CoIncrementMTAUsage_t CoIncrementMTAUsage;
     RoGetActivationFactory_t RoGetActivationFactory;
     WindowsCreateStringReference_t WindowsCreateStringReference;
@@ -107,7 +108,7 @@ DEFINE_GUID(IID___x_ABI_CWindows_CGaming_CInput_CIRawGameControllerStatics, 0xeb
 extern bool SDL_XINPUT_Enabled(void);
 
 
-static bool SDL_IsXInputDevice(Uint16 vendor, Uint16 product)
+static bool SDL_IsXInputDevice(Uint16 vendor, Uint16 product, const char *name)
 {
 #if defined(SDL_JOYSTICK_XINPUT) || defined(SDL_JOYSTICK_RAWINPUT)
     PRAWINPUTDEVICELIST raw_devices = NULL;
@@ -121,6 +122,13 @@ static bool SDL_IsXInputDevice(Uint16 vendor, Uint16 product)
 #endif
     ) {
         return false;
+    }
+
+    // Sometimes we'll get a Windows.Gaming.Input callback before the raw input device is even in the list,
+    // so try to do some checks up front to catch these cases.
+    if (SDL_IsJoystickXboxOne(vendor, product) ||
+        (name && SDL_strncmp(name, "Xbox ", 5) == 0)) {
+        return true;
     }
 
     // Go through RAWINPUT (WinXP and later) to find HID devices.
@@ -453,7 +461,7 @@ static HRESULT STDMETHODCALLTYPE IEventHandler_CRawGameControllerVtbl_InvokeAdde
             ignore_joystick = true;
         }
 
-        if (!ignore_joystick && SDL_IsXInputDevice(vendor, product)) {
+        if (!ignore_joystick && SDL_IsXInputDevice(vendor, product, name)) {
             // This hasn't been detected by the RAWINPUT driver yet, but it will be picked up later.
             ignore_joystick = true;
         }
@@ -578,13 +586,14 @@ static bool WGI_JoystickInit(void)
 {
     HRESULT hr;
 
-    if (!SDL_GetHintBoolean(SDL_HINT_JOYSTICK_WGI, true)) {
+    if (!SDL_GetHintBoolean(SDL_HINT_JOYSTICK_WGI, false)) {
         return true;
     }
 
     if (FAILED(WIN_RoInitialize())) {
         return SDL_SetError("RoInitialize() failed");
     }
+    wgi.ro_initialized = true;
 
 #define RESOLVE(x) wgi.x = (x##_t)WIN_LoadComBaseFunction(#x); if (!wgi.x) return WIN_SetError("GetProcAddress failed for " #x);
     RESOLVE(CoIncrementMTAUsage);
@@ -964,9 +973,7 @@ static void WGI_JoystickQuit(void)
         while (wgi.controller_count > 0) {
             IEventHandler_CRawGameControllerVtbl_InvokeRemoved(&controller_removed.iface, NULL, wgi.controllers[wgi.controller_count - 1].controller);
         }
-        if (wgi.controllers) {
-            SDL_free(wgi.controllers);
-        }
+        SDL_free(wgi.controllers);
 
         if (wgi.arcade_stick_statics) {
             __x_ABI_CWindows_CGaming_CInput_CIArcadeStickStatics_Release(wgi.arcade_stick_statics);
@@ -995,7 +1002,9 @@ static void WGI_JoystickQuit(void)
         __x_ABI_CWindows_CGaming_CInput_CIRawGameControllerStatics_Release(wgi.controller_statics);
     }
 
-    WIN_RoUninitialize();
+    if (wgi.ro_initialized) {
+        WIN_RoUninitialize();
+    }
 
     SDL_zero(wgi);
 }

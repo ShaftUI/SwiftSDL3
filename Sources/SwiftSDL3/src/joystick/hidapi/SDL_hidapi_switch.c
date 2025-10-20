@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -34,7 +34,9 @@
 #ifdef SDL_JOYSTICK_HIDAPI_SWITCH
 
 // Define this if you want to log all packets from the controller
-// #define DEBUG_SWITCH_PROTOCOL
+#if 0
+#define DEBUG_SWITCH_PROTOCOL
+#endif
 
 // Define this to get log output for rumble logic
 // #define DEBUG_RUMBLE
@@ -58,9 +60,7 @@
 #define SWITCH_GYRO_SCALE  14.2842f
 #define SWITCH_ACCEL_SCALE 4096.f
 
-#define SWITCH_GYRO_SCALE_OFFSET  13371.0f
 #define SWITCH_GYRO_SCALE_MULT    936.0f
-#define SWITCH_ACCEL_SCALE_OFFSET 16384.0f
 #define SWITCH_ACCEL_SCALE_MULT   4.0f
 
 enum
@@ -268,6 +268,18 @@ typedef struct
 } SwitchProprietaryOutputPacket_t;
 #pragma pack()
 
+/* Enhanced report hint mode:
+ * "0": enhanced features are never used
+ * "1": enhanced features are always used
+ * "auto": enhanced features are advertised to the application, but SDL doesn't touch the controller state unless the application explicitly requests it.
+ */
+typedef enum
+{
+    SWITCH_ENHANCED_REPORT_HINT_OFF,
+    SWITCH_ENHANCED_REPORT_HINT_ON,
+    SWITCH_ENHANCED_REPORT_HINT_AUTO
+} HIDAPI_Switch_EnhancedReportHint;
+
 typedef struct
 {
     SDL_HIDAPI_Device *device;
@@ -283,6 +295,9 @@ typedef struct
     Uint8 m_nCurrentInputMode;
     Uint8 m_rgucMACAddress[6];
     Uint8 m_nCommandNumber;
+    HIDAPI_Switch_EnhancedReportHint m_eEnhancedReportHint;
+    bool m_bEnhancedMode;
+    bool m_bEnhancedModeAvailable;
     SwitchCommonOutputPacket_t m_RumblePacket;
     Uint8 m_rgucReadBuffer[k_unSwitchMaxOutputPacketLength];
     bool m_bRumbleActive;
@@ -290,6 +305,7 @@ typedef struct
     bool m_bRumblePending;
     bool m_bRumbleZeroPending;
     Uint32 m_unRumblePending;
+    bool m_bSensorsSupported;
     bool m_bReportSensors;
     bool m_bHasSensorData;
     Uint64 m_ulLastInput;
@@ -299,6 +315,8 @@ typedef struct
     Uint64 m_ulIMUUpdateIntervalNS;
     Uint64 m_ulTimestampNS;
     bool m_bVerticalMode;
+    SDL_PowerState m_ePowerState;
+    int m_nPowerPercent;
 
     SwitchInputOnlyControllerStatePacket_t m_lastInputOnlyState;
     SwitchSimpleStatePacket_t m_lastSimpleState;
@@ -505,11 +523,11 @@ static bool WriteProprietary(SDL_DriverSwitch_Context *ctx, ESwitchProprietaryCo
         }
 
         if (!waitForReply || ReadProprietaryReply(ctx, ucCommand)) {
-            // SDL_Log("Succeeded%s after %d tries\n", ctx->m_bSyncWrite ? " (sync)" : "", nTries);
+            // SDL_Log("Succeeded%s after %d tries", ctx->m_bSyncWrite ? " (sync)" : "", nTries);
             return true;
         }
     }
-    // SDL_Log("Failed%s after %d tries\n", ctx->m_bSyncWrite ? " (sync)" : "", nTries);
+    // SDL_Log("Failed%s after %d tries", ctx->m_bSyncWrite ? " (sync)" : "", nTries);
     return false;
 }
 
@@ -563,7 +581,7 @@ static void EncodeRumble(SwitchRumbleData_t *pRumble, Uint16 usHighFreq, Uint8 u
         pRumble->rgucData[3] = usLowFreqAmp & 0xFF;
 
 #ifdef DEBUG_RUMBLE
-        SDL_Log("Freq: %.2X %.2X  %.2X, Amp: %.2X  %.2X %.2X\n",
+        SDL_Log("Freq: %.2X %.2X  %.2X, Amp: %.2X  %.2X %.2X",
                 usHighFreq & 0xFF, ((usHighFreq >> 8) & 0x01), ucLowFreq,
                 ucHighFreqAmp, ((usLowFreqAmp >> 8) & 0x80), usLowFreqAmp & 0xFF);
 #endif
@@ -777,24 +795,31 @@ static Uint8 GetDefaultInputMode(SDL_DriverSwitch_Context *ctx)
         }
     }
 
-    /* The official Nintendo Switch Pro Controller supports FullControllerState over Bluetooth
-     * just fine. We really should use that, or else the epowerlevel code in HandleFullControllerState
-     * is completely pointless. We need full state if we want battery level and we only care about
-     * battery level over Bluetooth anyway.
-     */
-    if (ctx->device->vendor_id == USB_VENDOR_NINTENDO) {
-        // However, switching to full controller state breaks DirectInput, so let's not do that
-        #if 0
-        input_mode = k_eSwitchInputReportIDs_FullControllerState;
-        #endif
-
-        /* However, Joy-Con controllers switch their thumbsticks into D-pad mode in simple mode,
-         * so let's enable full controller state for them.
-         */
-        if (ctx->device->product_id == USB_PRODUCT_NINTENDO_SWITCH_JOYCON_LEFT ||
-            ctx->device->product_id == USB_PRODUCT_NINTENDO_SWITCH_JOYCON_RIGHT) {
+    switch (ctx->m_eEnhancedReportHint) {
+    case SWITCH_ENHANCED_REPORT_HINT_OFF:
+        input_mode = k_eSwitchInputReportIDs_SimpleControllerState;
+        break;
+    case SWITCH_ENHANCED_REPORT_HINT_ON:
+        if (input_mode == k_eSwitchInputReportIDs_SimpleControllerState) {
             input_mode = k_eSwitchInputReportIDs_FullControllerState;
         }
+        break;
+    case SWITCH_ENHANCED_REPORT_HINT_AUTO:
+        /* Joy-Con controllers switch their thumbsticks into D-pad mode in simple mode,
+         * so let's enable full controller state for them.
+         */
+        if (ctx->device->vendor_id == USB_VENDOR_NINTENDO &&
+            (ctx->device->product_id == USB_PRODUCT_NINTENDO_SWITCH_JOYCON_LEFT ||
+             ctx->device->product_id == USB_PRODUCT_NINTENDO_SWITCH_JOYCON_RIGHT)) {
+            input_mode = k_eSwitchInputReportIDs_FullControllerState;
+        }
+        break;
+    }
+
+    // Wired controllers break if they are put into simple controller state
+    if (input_mode == k_eSwitchInputReportIDs_SimpleControllerState &&
+        !ctx->device->is_bluetooth) {
+        input_mode = k_eSwitchInputReportIDs_FullControllerState;
     }
     return input_mode;
 }
@@ -813,6 +838,92 @@ static Uint8 GetSensorInputMode(SDL_DriverSwitch_Context *ctx)
     return input_mode;
 }
 
+static void UpdateInputMode(SDL_DriverSwitch_Context *ctx)
+{
+    Uint8 input_mode;
+
+    if (ctx->m_bReportSensors) {
+        input_mode = GetSensorInputMode(ctx);
+    } else {
+        input_mode = GetDefaultInputMode(ctx);
+    }
+    SetInputMode(ctx, input_mode);
+}
+
+static void SetEnhancedModeAvailable(SDL_DriverSwitch_Context *ctx)
+{
+    if (ctx->m_bEnhancedModeAvailable) {
+        return;
+    }
+    ctx->m_bEnhancedModeAvailable = true;
+
+    if (ctx->m_bSensorsSupported) {
+        // Use the right sensor in the combined Joy-Con pair
+        if (!ctx->device->parent ||
+            ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConRight) {
+            SDL_PrivateJoystickAddSensor(ctx->joystick, SDL_SENSOR_GYRO, 200.0f);
+            SDL_PrivateJoystickAddSensor(ctx->joystick, SDL_SENSOR_ACCEL, 200.0f);
+        }
+        if (ctx->device->parent &&
+            ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConLeft) {
+            SDL_PrivateJoystickAddSensor(ctx->joystick, SDL_SENSOR_GYRO_L, 200.0f);
+            SDL_PrivateJoystickAddSensor(ctx->joystick, SDL_SENSOR_ACCEL_L, 200.0f);
+        }
+        if (ctx->device->parent &&
+            ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConRight) {
+            SDL_PrivateJoystickAddSensor(ctx->joystick, SDL_SENSOR_GYRO_R, 200.0f);
+            SDL_PrivateJoystickAddSensor(ctx->joystick, SDL_SENSOR_ACCEL_R, 200.0f);
+        }
+    }
+}
+
+static void SetEnhancedReportHint(SDL_DriverSwitch_Context *ctx, HIDAPI_Switch_EnhancedReportHint eEnhancedReportHint)
+{
+    ctx->m_eEnhancedReportHint = eEnhancedReportHint;
+
+    switch (eEnhancedReportHint) {
+    case SWITCH_ENHANCED_REPORT_HINT_OFF:
+        ctx->m_bEnhancedMode = false;
+        break;
+    case SWITCH_ENHANCED_REPORT_HINT_ON:
+        SetEnhancedModeAvailable(ctx);
+        ctx->m_bEnhancedMode = true;
+        break;
+    case SWITCH_ENHANCED_REPORT_HINT_AUTO:
+        SetEnhancedModeAvailable(ctx);
+        break;
+    }
+
+    UpdateInputMode(ctx);
+}
+
+static void UpdateEnhancedModeOnEnhancedReport(SDL_DriverSwitch_Context *ctx)
+{
+    if (ctx->m_eEnhancedReportHint == SWITCH_ENHANCED_REPORT_HINT_AUTO) {
+        SetEnhancedReportHint(ctx, SWITCH_ENHANCED_REPORT_HINT_ON);
+    }
+}
+
+static void UpdateEnhancedModeOnApplicationUsage(SDL_DriverSwitch_Context *ctx)
+{
+    if (ctx->m_eEnhancedReportHint == SWITCH_ENHANCED_REPORT_HINT_AUTO) {
+        SetEnhancedReportHint(ctx, SWITCH_ENHANCED_REPORT_HINT_ON);
+    }
+}
+
+static void SDLCALL SDL_EnhancedReportsChanged(void *userdata, const char *name, const char *oldValue, const char *hint)
+{
+    SDL_DriverSwitch_Context *ctx = (SDL_DriverSwitch_Context *)userdata;
+
+    if (hint && SDL_strcasecmp(hint, "auto") == 0) {
+        SetEnhancedReportHint(ctx, SWITCH_ENHANCED_REPORT_HINT_AUTO);
+    } else if (SDL_GetStringBoolean(hint, true)) {
+        SetEnhancedReportHint(ctx, SWITCH_ENHANCED_REPORT_HINT_ON);
+    } else {
+        SetEnhancedReportHint(ctx, SWITCH_ENHANCED_REPORT_HINT_OFF);
+    }
+}
+
 static bool SetIMUEnabled(SDL_DriverSwitch_Context *ctx, bool enabled)
 {
     Uint8 imu_data = enabled ? 1 : 0;
@@ -821,13 +932,14 @@ static bool SetIMUEnabled(SDL_DriverSwitch_Context *ctx, bool enabled)
 
 static bool LoadStickCalibration(SDL_DriverSwitch_Context *ctx)
 {
-    Uint8 *pLeftStickCal;
-    Uint8 *pRightStickCal;
+    Uint8 *pLeftStickCal = NULL;
+    Uint8 *pRightStickCal = NULL;
     size_t stick, axis;
     SwitchSubcommandInputPacket_t *user_reply = NULL;
     SwitchSubcommandInputPacket_t *factory_reply = NULL;
     SwitchSPIOpData_t readUserParams;
     SwitchSPIOpData_t readFactoryParams;
+    Uint8 userParamsReadSuccessCount = 0;
 
     // Read User Calibration Info
     readUserParams.unAddress = k_unSPIStickUserCalibrationStartOffset;
@@ -840,21 +952,46 @@ static bool LoadStickCalibration(SDL_DriverSwitch_Context *ctx)
     readFactoryParams.unAddress = k_unSPIStickFactoryCalibrationStartOffset;
     readFactoryParams.ucLength = k_unSPIStickFactoryCalibrationLength;
 
-    if (!WriteSubcommand(ctx, k_eSwitchSubcommandIDs_SPIFlashRead, (uint8_t *)&readFactoryParams, sizeof(readFactoryParams), &factory_reply)) {
-        return false;
-    }
-
     // Automatically select the user calibration if magic bytes are set
     if (user_reply && user_reply->stickUserCalibration.rgucLeftMagic[0] == 0xB2 && user_reply->stickUserCalibration.rgucLeftMagic[1] == 0xA1) {
+        userParamsReadSuccessCount += 1;
         pLeftStickCal = user_reply->stickUserCalibration.rgucLeftCalibration;
-    } else {
-        pLeftStickCal = factory_reply->stickFactoryCalibration.rgucLeftCalibration;
     }
 
     if (user_reply && user_reply->stickUserCalibration.rgucRightMagic[0] == 0xB2 && user_reply->stickUserCalibration.rgucRightMagic[1] == 0xA1) {
+        userParamsReadSuccessCount += 1;
         pRightStickCal = user_reply->stickUserCalibration.rgucRightCalibration;
-    } else {
-        pRightStickCal = factory_reply->stickFactoryCalibration.rgucRightCalibration;
+    }
+
+    // Only read the factory calibration info if we failed to receive the correct magic bytes
+    if (userParamsReadSuccessCount < 2) {
+        // Read Factory Calibration Info
+        readFactoryParams.unAddress = k_unSPIStickFactoryCalibrationStartOffset;
+        readFactoryParams.ucLength = k_unSPIStickFactoryCalibrationLength;
+
+        const int MAX_ATTEMPTS = 3;
+        for (int attempt = 0;; ++attempt) {
+            if (!WriteSubcommand(ctx, k_eSwitchSubcommandIDs_SPIFlashRead, (uint8_t *)&readFactoryParams, sizeof(readFactoryParams), &factory_reply)) {
+                return false;
+            }
+
+            if (factory_reply->stickFactoryCalibration.opData.unAddress == k_unSPIStickFactoryCalibrationStartOffset) {
+                // We successfully read the calibration data
+                pLeftStickCal = factory_reply->stickFactoryCalibration.rgucLeftCalibration;
+                pRightStickCal = factory_reply->stickFactoryCalibration.rgucRightCalibration;
+                break;
+            }
+
+            if (attempt == MAX_ATTEMPTS) {
+                return false;
+            }
+        }
+    }
+
+    // If we still don't have calibration data, return false
+    if (pLeftStickCal == NULL || pRightStickCal == NULL)
+    {
+        return false;
     }
 
     /* Stick calibration values are 12-bits each and are packed by bit
@@ -923,6 +1060,8 @@ static bool LoadIMUCalibration(SDL_DriverSwitch_Context *ctx)
     if (WriteSubcommand(ctx, k_eSwitchSubcommandIDs_SPIFlashRead, (uint8_t *)&readParams, sizeof(readParams), &reply)) {
         Uint8 *pIMUScale;
         Sint16 sAccelRawX, sAccelRawY, sAccelRawZ, sGyroRawX, sGyroRawY, sGyroRawZ;
+        Sint16 sAccelSensCoeffX, sAccelSensCoeffY, sAccelSensCoeffZ;
+        Sint16 sGyroSensCoeffX, sGyroSensCoeffY, sGyroSensCoeffZ;
 
         // IMU scale gives us multipliers for converting raw values to real world values
         pIMUScale = reply->spiReadData.rgucReadData;
@@ -931,9 +1070,17 @@ static bool LoadIMUCalibration(SDL_DriverSwitch_Context *ctx)
         sAccelRawY = (pIMUScale[3] << 8) | pIMUScale[2];
         sAccelRawZ = (pIMUScale[5] << 8) | pIMUScale[4];
 
+        sAccelSensCoeffX = (pIMUScale[7] << 8) | pIMUScale[6];
+        sAccelSensCoeffY = (pIMUScale[9] << 8) | pIMUScale[8];
+        sAccelSensCoeffZ = (pIMUScale[11] << 8) | pIMUScale[10];
+
         sGyroRawX = (pIMUScale[13] << 8) | pIMUScale[12];
         sGyroRawY = (pIMUScale[15] << 8) | pIMUScale[14];
         sGyroRawZ = (pIMUScale[17] << 8) | pIMUScale[16];
+
+        sGyroSensCoeffX = (pIMUScale[19] << 8) | pIMUScale[18];
+        sGyroSensCoeffY = (pIMUScale[21] << 8) | pIMUScale[20];
+        sGyroSensCoeffZ = (pIMUScale[23] << 8) | pIMUScale[22];
 
         // Check for user calibration data. If it's present and set, it'll override the factory settings
         readParams.unAddress = k_unSPIIMUUserScaleStartOffset;
@@ -951,14 +1098,14 @@ static bool LoadIMUCalibration(SDL_DriverSwitch_Context *ctx)
         }
 
         // Accelerometer scale
-        ctx->m_IMUScaleData.fAccelScaleX = SWITCH_ACCEL_SCALE_MULT / (SWITCH_ACCEL_SCALE_OFFSET - (float)sAccelRawX) * SDL_STANDARD_GRAVITY;
-        ctx->m_IMUScaleData.fAccelScaleY = SWITCH_ACCEL_SCALE_MULT / (SWITCH_ACCEL_SCALE_OFFSET - (float)sAccelRawY) * SDL_STANDARD_GRAVITY;
-        ctx->m_IMUScaleData.fAccelScaleZ = SWITCH_ACCEL_SCALE_MULT / (SWITCH_ACCEL_SCALE_OFFSET - (float)sAccelRawZ) * SDL_STANDARD_GRAVITY;
+        ctx->m_IMUScaleData.fAccelScaleX = SWITCH_ACCEL_SCALE_MULT / ((float)sAccelSensCoeffX - (float)sAccelRawX) * SDL_STANDARD_GRAVITY;
+        ctx->m_IMUScaleData.fAccelScaleY = SWITCH_ACCEL_SCALE_MULT / ((float)sAccelSensCoeffY - (float)sAccelRawY) * SDL_STANDARD_GRAVITY;
+        ctx->m_IMUScaleData.fAccelScaleZ = SWITCH_ACCEL_SCALE_MULT / ((float)sAccelSensCoeffZ - (float)sAccelRawZ) * SDL_STANDARD_GRAVITY;
 
         // Gyro scale
-        ctx->m_IMUScaleData.fGyroScaleX = SWITCH_GYRO_SCALE_MULT / (SWITCH_GYRO_SCALE_OFFSET - (float)sGyroRawX) * SDL_PI_F / 180.0f;
-        ctx->m_IMUScaleData.fGyroScaleY = SWITCH_GYRO_SCALE_MULT / (SWITCH_GYRO_SCALE_OFFSET - (float)sGyroRawY) * SDL_PI_F / 180.0f;
-        ctx->m_IMUScaleData.fGyroScaleZ = SWITCH_GYRO_SCALE_MULT / (SWITCH_GYRO_SCALE_OFFSET - (float)sGyroRawZ) * SDL_PI_F / 180.0f;
+        ctx->m_IMUScaleData.fGyroScaleX = SWITCH_GYRO_SCALE_MULT / ((float)sGyroSensCoeffX - (float)sGyroRawX) * SDL_PI_F / 180.0f;
+        ctx->m_IMUScaleData.fGyroScaleY = SWITCH_GYRO_SCALE_MULT / ((float)sGyroSensCoeffY - (float)sGyroRawY) * SDL_PI_F / 180.0f;
+        ctx->m_IMUScaleData.fGyroScaleZ = SWITCH_GYRO_SCALE_MULT / ((float)sGyroSensCoeffZ - (float)sGyroRawZ) * SDL_PI_F / 180.0f;
 
     } else {
         // Use default values
@@ -980,14 +1127,17 @@ static Sint16 ApplyStickCalibration(SDL_DriverSwitch_Context *ctx, int nStick, i
 {
     sRawValue -= ctx->m_StickCalData[nStick].axis[nAxis].sCenter;
 
-    if (sRawValue > ctx->m_StickExtents[nStick].axis[nAxis].sMax) {
-        ctx->m_StickExtents[nStick].axis[nAxis].sMax = sRawValue;
+    if (sRawValue >= 0) {
+        if (sRawValue > ctx->m_StickExtents[nStick].axis[nAxis].sMax) {
+            ctx->m_StickExtents[nStick].axis[nAxis].sMax = sRawValue;
+        }
+        return (Sint16)HIDAPI_RemapVal(sRawValue, 0, ctx->m_StickExtents[nStick].axis[nAxis].sMax, 0, SDL_MAX_SINT16);
+    } else {
+        if (sRawValue < ctx->m_StickExtents[nStick].axis[nAxis].sMin) {
+            ctx->m_StickExtents[nStick].axis[nAxis].sMin = sRawValue;
+        }
+        return (Sint16)HIDAPI_RemapVal(sRawValue, ctx->m_StickExtents[nStick].axis[nAxis].sMin, 0, SDL_MIN_SINT16, 0);
     }
-    if (sRawValue < ctx->m_StickExtents[nStick].axis[nAxis].sMin) {
-        ctx->m_StickExtents[nStick].axis[nAxis].sMin = sRawValue;
-    }
-
-    return (Sint16)HIDAPI_RemapVal(sRawValue, ctx->m_StickExtents[nStick].axis[nAxis].sMin, ctx->m_StickExtents[nStick].axis[nAxis].sMax, SDL_MIN_SINT16, SDL_MAX_SINT16);
 }
 
 static Sint16 ApplySimpleStickCalibration(SDL_DriverSwitch_Context *ctx, int nStick, int nAxis, Sint16 sRawValue)
@@ -997,14 +1147,17 @@ static Sint16 ApplySimpleStickCalibration(SDL_DriverSwitch_Context *ctx, int nSt
 
     sRawValue -= usJoystickCenter;
 
-    if (sRawValue > ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMax) {
-        ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMax = sRawValue;
+    if (sRawValue >= 0) {
+        if (sRawValue > ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMax) {
+            ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMax = sRawValue;
+        }
+        return (Sint16)HIDAPI_RemapVal(sRawValue, 0, ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMax, 0, SDL_MAX_SINT16);
+    } else {
+        if (sRawValue < ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMin) {
+            ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMin = sRawValue;
+        }
+        return (Sint16)HIDAPI_RemapVal(sRawValue, ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMin, 0, SDL_MIN_SINT16, 0);
     }
-    if (sRawValue < ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMin) {
-        ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMin = sRawValue;
-    }
-
-    return (Sint16)HIDAPI_RemapVal(sRawValue, ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMin, ctx->m_SimpleStickExtents[nStick].axis[nAxis].sMax, SDL_MIN_SINT16, SDL_MAX_SINT16);
 }
 
 static Uint8 RemapButton(SDL_DriverSwitch_Context *ctx, Uint8 button)
@@ -1237,7 +1390,15 @@ static bool HIDAPI_DriverSwitch_IsSupportedDevice(SDL_HIDAPI_Device *device, con
         return false;
     }
 
-    return (type == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO);
+    if (type != SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO) {
+        return false;
+    }
+
+    // The Nintendo Switch 2 Pro uses another driver
+    if (vendor_id == USB_VENDOR_NINTENDO && product_id == USB_PRODUCT_NINTENDO_SWITCH2_PRO) {
+        return false;
+    }
+    return true;
 }
 
 static void UpdateDeviceIdentity(SDL_HIDAPI_Device *device)
@@ -1246,7 +1407,7 @@ static void UpdateDeviceIdentity(SDL_HIDAPI_Device *device)
 
     if (ctx->m_bInputOnly) {
         if (SDL_IsJoystickGameCube(device->vendor_id, device->product_id)) {
-            device->type = SDL_GAMEPAD_TYPE_STANDARD;
+            device->type = SDL_GAMEPAD_TYPE_GAMECUBE;
         }
     } else {
         char serial[18];
@@ -1405,6 +1566,10 @@ static bool HIDAPI_DriverSwitch_OpenJoystick(SDL_HIDAPI_Device *device, SDL_Joys
     ctx->m_bSyncWrite = true;
 
     if (!ctx->m_bInputOnly) {
+#ifdef SDL_PLATFORM_MACOS
+        // Wait for the OS to finish its handshake with the controller
+        SDL_Delay(250);
+#endif
         GetInitialInputMode(ctx);
         ctx->m_nCurrentInputMode = ctx->m_nInitialInputMode;
 
@@ -1430,37 +1595,19 @@ static bool HIDAPI_DriverSwitch_OpenJoystick(SDL_HIDAPI_Device *device, SDL_Joys
             ctx->m_eControllerType != k_eSwitchDeviceInfoControllerType_NESRight &&
             ctx->m_eControllerType != k_eSwitchDeviceInfoControllerType_SNES &&
             ctx->m_eControllerType != k_eSwitchDeviceInfoControllerType_N64 &&
-            ctx->m_eControllerType != k_eSwitchDeviceInfoControllerType_SEGA_Genesis) {
+            ctx->m_eControllerType != k_eSwitchDeviceInfoControllerType_SEGA_Genesis &&
+            !(device->vendor_id == USB_VENDOR_PDP && device->product_id == USB_PRODUCT_PDP_REALMZ_WIRELESS)) {
             if (LoadIMUCalibration(ctx)) {
-                // Use the right sensor in the combined Joy-Con pair
-                if (!device->parent ||
-                    ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConRight) {
-                    SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_GYRO, 200.0f);
-                    SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_ACCEL, 200.0f);
-                }
-                if (device->parent &&
-                    ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConLeft) {
-                    SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_GYRO_L, 200.0f);
-                    SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_ACCEL_L, 200.0f);
-                }
-                if (device->parent &&
-                    ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConRight) {
-                    SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_GYRO_R, 200.0f);
-                    SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_ACCEL_R, 200.0f);
-                }
+                ctx->m_bSensorsSupported = true;
             }
         }
 
-        if (!SetVibrationEnabled(ctx, 1)) {
-            SDL_SetError("Couldn't enable vibration");
-            return false;
-        }
+        // Enable vibration
+        SetVibrationEnabled(ctx, 1);
 
         // Set desired input mode
-        if (!SetInputMode(ctx, GetDefaultInputMode(ctx))) {
-            SDL_SetError("Couldn't set input mode");
-            return false;
-        }
+        SDL_AddHintCallback(SDL_HINT_JOYSTICK_ENHANCED_REPORTS,
+                            SDL_EnhancedReportsChanged, ctx);
 
         // Start sending USB reports
         if (!device->is_bluetooth) {
@@ -1552,7 +1699,7 @@ static bool HIDAPI_DriverSwitch_SendPendingRumble(SDL_DriverSwitch_Context *ctx)
         Uint16 high_frequency_rumble = (Uint16)ctx->m_unRumblePending;
 
 #ifdef DEBUG_RUMBLE
-        SDL_Log("Sent pending rumble %d/%d, %d ms after previous rumble\n", low_frequency_rumble, high_frequency_rumble, SDL_GetTicks() - ctx->m_ulRumbleSent);
+        SDL_Log("Sent pending rumble %d/%d, %d ms after previous rumble", low_frequency_rumble, high_frequency_rumble, SDL_GetTicks() - ctx->m_ulRumbleSent);
 #endif
         ctx->m_bRumblePending = false;
         ctx->m_unRumblePending = 0;
@@ -1564,7 +1711,7 @@ static bool HIDAPI_DriverSwitch_SendPendingRumble(SDL_DriverSwitch_Context *ctx)
         ctx->m_bRumbleZeroPending = false;
 
 #ifdef DEBUG_RUMBLE
-        SDL_Log("Sent pending zero rumble, %d ms after previous rumble\n", SDL_GetTicks() - ctx->m_ulRumbleSent);
+        SDL_Log("Sent pending zero rumble, %d ms after previous rumble", SDL_GetTicks() - ctx->m_ulRumbleSent);
 #endif
         return HIDAPI_DriverSwitch_ActuallyRumbleJoystick(ctx, 0, 0);
     }
@@ -1614,7 +1761,7 @@ static bool HIDAPI_DriverSwitch_RumbleJoystick(SDL_HIDAPI_Device *device, SDL_Jo
     }
 
 #ifdef DEBUG_RUMBLE
-    SDL_Log("Sent rumble %d/%d\n", low_frequency_rumble, high_frequency_rumble);
+    SDL_Log("Sent rumble %d/%d", low_frequency_rumble, high_frequency_rumble);
 #endif
 
     return HIDAPI_DriverSwitch_ActuallyRumbleJoystick(ctx, low_frequency_rumble, high_frequency_rumble);
@@ -1694,19 +1841,19 @@ static bool HIDAPI_DriverSwitch_SendJoystickEffect(SDL_HIDAPI_Device *device, SD
 static bool HIDAPI_DriverSwitch_SetJoystickSensorsEnabled(SDL_HIDAPI_Device *device, SDL_Joystick *joystick, bool enabled)
 {
     SDL_DriverSwitch_Context *ctx = (SDL_DriverSwitch_Context *)device->context;
-    Uint8 input_mode;
 
-    if (enabled) {
-        input_mode = GetSensorInputMode(ctx);
-    } else {
-        input_mode = GetDefaultInputMode(ctx);
+    UpdateEnhancedModeOnApplicationUsage(ctx);
+
+    if (!ctx->m_bSensorsSupported || (enabled && !ctx->m_bEnhancedMode)) {
+        return SDL_Unsupported();
     }
-    SetInputMode(ctx, input_mode);
 
-    SetIMUEnabled(ctx, enabled);
     ctx->m_bReportSensors = enabled;
     ctx->m_unIMUSamples = 0;
     ctx->m_ulIMUSampleTimestampNS = SDL_GetTicksNS();
+
+    UpdateInputMode(ctx);
+    SetIMUEnabled(ctx, enabled);
 
     return true;
 }
@@ -2433,32 +2580,34 @@ static void HandleFullControllerState(SDL_Joystick *joystick, SDL_DriverSwitch_C
         SDL_SendJoystickAxis(timestamp, joystick, SDL_GAMEPAD_AXIS_RIGHTY, ~axis);
     }
 
-    /* High nibble of battery/connection byte is battery level, low nibble is connection status
+    /* High nibble of battery/connection byte is battery level, low nibble is connection status (always 0 on 8BitDo Pro 2)
      * LSB of connection nibble is USB/Switch connection status
      * LSB of the battery nibble is used to report charging.
      * The battery level is reported from 0(empty)-8(full)
      */
-    SDL_PowerState state;
     int charging = (packet->controllerState.ucBatteryAndConnection & 0x10);
     int level = (packet->controllerState.ucBatteryAndConnection & 0xE0) >> 4;
-    int percent = (int)SDL_roundf((level / 8.0f) * 100.0f);
-
-    if (packet->controllerState.ucBatteryAndConnection & 0x01) {
-        joystick->connection_state = SDL_JOYSTICK_CONNECTION_WIRED;
-    } else {
-        joystick->connection_state = SDL_JOYSTICK_CONNECTION_WIRELESS;
-    }
-
     if (charging) {
         if (level == 8) {
-            state = SDL_POWERSTATE_CHARGED;
+            ctx->m_ePowerState = SDL_POWERSTATE_CHARGED;
         } else {
-            state = SDL_POWERSTATE_CHARGING;
+            ctx->m_ePowerState = SDL_POWERSTATE_CHARGING;
         }
     } else {
-        state = SDL_POWERSTATE_ON_BATTERY;
+        ctx->m_ePowerState = SDL_POWERSTATE_ON_BATTERY;
     }
-    SDL_SendJoystickPowerInfo(joystick, state, percent);
+    ctx->m_nPowerPercent = (int)SDL_roundf((level / 8.0f) * 100.0f);
+
+    if (!ctx->device->parent) {
+        SDL_PowerState state = ctx->m_ePowerState;
+        int percent = ctx->m_nPowerPercent;
+        SDL_SendJoystickPowerInfo(joystick, state, percent);
+    } else if (ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConRight) {
+        SDL_DriverSwitch_Context *other = (SDL_DriverSwitch_Context *)ctx->device->parent->children[0]->context;
+        SDL_PowerState state = (SDL_PowerState)SDL_min(ctx->m_ePowerState, other->m_ePowerState);
+        int percent = SDL_min(ctx->m_nPowerPercent, other->m_nPowerPercent);
+        SDL_SendJoystickPowerInfo(joystick, state, percent);
+    }
 
     if (ctx->m_bReportSensors) {
         bool bHasSensorData = (packet->imuState[0].sAccelZ != 0 ||
@@ -2591,6 +2740,9 @@ static bool HIDAPI_DriverSwitch_UpdateDevice(SDL_HIDAPI_Device *device)
                 break;
             case k_eSwitchInputReportIDs_FullControllerState:
             case k_eSwitchInputReportIDs_FullControllerAndMcuState:
+                // This is the extended report, we can enable sensors now in auto mode
+                UpdateEnhancedModeOnEnhancedReport(ctx);
+
                 HandleFullControllerState(joystick, ctx, (SwitchStatePacket_t *)&ctx->m_rgucReadBuffer[1]);
                 break;
             default:
@@ -2627,7 +2779,7 @@ static bool HIDAPI_DriverSwitch_UpdateDevice(SDL_HIDAPI_Device *device)
         } else if (ctx->m_bRumbleActive &&
                    now >= (ctx->m_ulRumbleSent + RUMBLE_REFRESH_FREQUENCY_MS)) {
 #ifdef DEBUG_RUMBLE
-            SDL_Log("Sent continuing rumble, %d ms after previous rumble\n", now - ctx->m_ulRumbleSent);
+            SDL_Log("Sent continuing rumble, %d ms after previous rumble", now - ctx->m_ulRumbleSent);
 #endif
             WriteRumble(ctx);
         }
@@ -2635,6 +2787,7 @@ static bool HIDAPI_DriverSwitch_UpdateDevice(SDL_HIDAPI_Device *device)
 
     // Reconnect the Bluetooth device once the USB device is gone
     if (device->num_joysticks == 0 && device->is_bluetooth && packet_count > 0 &&
+        !device->parent &&
         !HIDAPI_HasConnectedUSBDevice(device->serial)) {
         HIDAPI_JoystickConnected(device, NULL);
     }
@@ -2658,6 +2811,9 @@ static void HIDAPI_DriverSwitch_CloseJoystick(SDL_HIDAPI_Device *device, SDL_Joy
         }
     }
 
+    SDL_RemoveHintCallback(SDL_HINT_JOYSTICK_ENHANCED_REPORTS,
+                        SDL_EnhancedReportsChanged, ctx);
+
     if (ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConLeft ||
         ctx->m_eControllerType == k_eSwitchDeviceInfoControllerType_JoyConRight) {
         SDL_RemoveHintCallback(SDL_HINT_JOYSTICK_HIDAPI_JOYCON_HOME_LED,
@@ -2671,6 +2827,10 @@ static void HIDAPI_DriverSwitch_CloseJoystick(SDL_HIDAPI_Device *device, SDL_Joy
                         SDL_PlayerLEDHintChanged, ctx);
 
     ctx->joystick = NULL;
+
+    ctx->m_bReportSensors = false;
+    ctx->m_bEnhancedMode = false;
+    ctx->m_bEnhancedModeAvailable = false;
 }
 
 static void HIDAPI_DriverSwitch_FreeDevice(SDL_HIDAPI_Device *device)

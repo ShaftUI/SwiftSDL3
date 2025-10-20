@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -20,7 +20,7 @@
 */
 #include "SDL_internal.h"
 
-#if SDL_HAVE_RLE
+#ifdef SDL_HAVE_RLE
 
 /*
  * RLE encoding for software colorkey and alpha-channel acceleration
@@ -1434,6 +1434,7 @@ bool SDL_RLESurface(SDL_Surface *surface)
 
     // The surface is now accelerated
     surface->internal_flags |= SDL_INTERNAL_SURFACE_RLEACCEL;
+    SDL_UpdateSurfaceLockFlag(surface);
 
     return true;
 }
@@ -1565,11 +1566,12 @@ void SDL_UnRLESurface(SDL_Surface *surface, bool recode)
                 }
             }
         }
-        surface->map.info.flags &=
-            ~(SDL_COPY_RLE_COLORKEY | SDL_COPY_RLE_ALPHAKEY);
+        surface->map.info.flags &= ~(SDL_COPY_RLE_COLORKEY | SDL_COPY_RLE_ALPHAKEY);
 
         SDL_free(surface->map.data);
         surface->map.data = NULL;
+
+        SDL_UpdateSurfaceLockFlag(surface);
     }
 }
 

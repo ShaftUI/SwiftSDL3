@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -20,7 +20,7 @@
 */
 #include "SDL_internal.h"
 
-#if SDL_HAVE_BLIT_0
+#ifdef SDL_HAVE_BLIT_0
 
 #include "SDL_surface_c.h"
 
@@ -617,7 +617,7 @@ static void BlitBtoNAlpha(SDL_BlitInfo *info)
     const SDL_PixelFormatDetails *dstfmt = info->dst_fmt;
     int srcbpp, dstbpp;
     int c;
-    Uint32 pixel, mask, align;
+    Uint32 pixelvalue, mask, align;
     unsigned sR, sG, sB;
     unsigned dR, dG, dB, dA;
     const unsigned A = info->a;
@@ -646,7 +646,7 @@ static void BlitBtoNAlpha(SDL_BlitInfo *info)
                     sR = srcpal[bit].r;
                     sG = srcpal[bit].g;
                     sB = srcpal[bit].b;
-                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixel, dR, dG, dB, dA);
+                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixelvalue, dR, dG, dB, dA);
                     ALPHA_BLEND_RGBA(sR, sG, sB, A, dR, dG, dB, dA);
                     ASSEMBLE_RGBA(dst, dstbpp, dstfmt, dR, dG, dB, dA);
                 }
@@ -668,7 +668,7 @@ static void BlitBtoNAlpha(SDL_BlitInfo *info)
                     sR = srcpal[bit].r;
                     sG = srcpal[bit].g;
                     sB = srcpal[bit].b;
-                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixel, dR, dG, dB, dA);
+                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixelvalue, dR, dG, dB, dA);
                     ALPHA_BLEND_RGBA(sR, sG, sB, A, dR, dG, dB, dA);
                     ASSEMBLE_RGBA(dst, dstbpp, dstfmt, dR, dG, dB, dA);
                 }
@@ -694,7 +694,7 @@ static void BlitBtoNAlphaKey(SDL_BlitInfo *info)
     const SDL_Color *srcpal = info->src_pal->colors;
     int srcbpp, dstbpp;
     int c;
-    Uint32 pixel, mask, align;
+    Uint32 pixelvalue, mask, align;
     unsigned sR, sG, sB;
     unsigned dR, dG, dB, dA;
     const unsigned A = info->a;
@@ -724,7 +724,7 @@ static void BlitBtoNAlphaKey(SDL_BlitInfo *info)
                     sR = srcpal[bit].r;
                     sG = srcpal[bit].g;
                     sB = srcpal[bit].b;
-                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixel, dR, dG, dB, dA);
+                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixelvalue, dR, dG, dB, dA);
                     ALPHA_BLEND_RGBA(sR, sG, sB, A, dR, dG, dB, dA);
                     ASSEMBLE_RGBA(dst, dstbpp, dstfmt, dR, dG, dB, dA);
                 }
@@ -746,7 +746,7 @@ static void BlitBtoNAlphaKey(SDL_BlitInfo *info)
                     sR = srcpal[bit].r;
                     sG = srcpal[bit].g;
                     sB = srcpal[bit].b;
-                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixel, dR, dG, dB, dA);
+                    DISEMBLE_RGBA(dst, dstbpp, dstfmt, pixelvalue, dR, dG, dB, dA);
                     ALPHA_BLEND_RGBA(sR, sG, sB, A, dR, dG, dB, dA);
                     ASSEMBLE_RGBA(dst, dstbpp, dstfmt, dR, dG, dB, dA);
                 }

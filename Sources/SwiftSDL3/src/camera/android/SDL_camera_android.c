@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -327,31 +327,40 @@ static SDL_CameraFrameResult ANDROIDCAMERA_AcquireFrame(SDL_Camera *device, SDL_
         num_planes--;   // treat the interleaved planes as one.
     }
 
-    // !!! FIXME: we have an open issue in SDL3 to allow SDL_Surface to support non-contiguous planar data, but we don't have it yet.
     size_t buflen = 0;
+    pAImage_getPlaneRowStride(image, 0, &frame->pitch);
     for (int i = 0; (i < num_planes) && (i < 3); i++) {
-        uint8_t *data = NULL;
-        int32_t datalen = 0;
-        pAImage_getPlaneData(image, i, &data, &datalen);
-        buflen += (int) datalen;
+        int32_t expected;
+        if (i == 0) {
+            expected = frame->pitch * frame->h;
+        } else {
+            expected = frame->pitch * (frame->h + 1) / 2;
+        }
+        buflen += expected;
     }
 
     frame->pixels = SDL_aligned_alloc(SDL_GetSIMDAlignment(), buflen);
     if (frame->pixels == NULL) {
         result = SDL_CAMERA_FRAME_ERROR;
     } else {
-        int32_t row_stride = 0;
         Uint8 *dst = frame->pixels;
-        pAImage_getPlaneRowStride(image, 0, &row_stride);
-        frame->pitch = (int) row_stride;  // this is what SDL3 currently expects, probably incorrectly.
 
         for (int i = 0; (i < num_planes) && (i < 3); i++) {
             uint8_t *data = NULL;
             int32_t datalen = 0;
+            int32_t expected;
+            if (i == 0) {
+                expected = frame->pitch * frame->h;
+            } else {
+                expected = frame->pitch * (frame->h + 1) / 2;
+            }
             pAImage_getPlaneData(image, i, &data, &datalen);
-            const void *src = data;
-            SDL_memcpy(dst, src, datalen);
-            dst += datalen;
+
+            int32_t row_stride = 0;
+            pAImage_getPlaneRowStride(image, i, &row_stride);
+            SDL_assert(row_stride == frame->pitch);
+            SDL_memcpy(dst, data, SDL_min(expected, datalen));
+            dst += expected;
         }
     }
 
@@ -631,8 +640,8 @@ static void GatherCameraSpecs(const char *devid, CameraFormatAddData *add_data, 
     const int32_t *i32ptr = cfgentry.data.i32;
     for (int i = 0; i < cfgentry.count; i++, i32ptr += 4) {
         const int32_t fmt = i32ptr[0];
-        const int w = (int) i32ptr[1];
-        const int h = (int) i32ptr[2];
+        const int w = i32ptr[1];
+        const int h = i32ptr[2];
         const int32_t type = i32ptr[3];
         SDL_PixelFormat sdlfmt = SDL_PIXELFORMAT_UNKNOWN;
         SDL_Colorspace colorspace = SDL_COLORSPACE_UNKNOWN;
@@ -720,7 +729,7 @@ static void onCameraAvailable(void *context, const char *cameraId)
 static void onCameraUnavailable(void *context, const char *cameraId)
 {
     #if DEBUG_CAMERA
-    SDL_Log("CAMERA: CB onCameraUnvailable('%s')", cameraId);
+    SDL_Log("CAMERA: CB onCameraUnavailable('%s')", cameraId);
     #endif
 
     SDL_assert(cameraId != NULL);
@@ -805,7 +814,7 @@ static void ANDROIDCAMERA_Deinitialize(void)
 static bool ANDROIDCAMERA_Init(SDL_CameraDriverImpl *impl)
 {
     // !!! FIXME: slide this off into a subroutine
-    // system libraries are in android-24 and later; we currently target android-16 and later, so check if they exist at runtime.
+    // system libraries are in android-24 and later; we currently target android-21 and later, so check if they exist at runtime.
     void *libcamera2 = dlopen("libcamera2ndk.so", RTLD_NOW | RTLD_LOCAL);
     if (!libcamera2) {
         SDL_Log("CAMERA: libcamera2ndk.so can't be loaded: %s", dlerror());

@@ -1,0 +1,25 @@
+From: SwiftSDL3 Custom Integration
+Date: Mon, 20 Oct 2025 22:41:00 +0000
+Subject: [PATCH] Add Swift module map for SDL3
+
+This module map is required for Swift Package Manager integration.
+It exposes the SDL3 C API to Swift by importing only the umbrella header.
+
+---
+ Sources/SwiftSDL3/include/module.modulemap | 4 ++++
+ 1 file changed, 4 insertions(+)
+ create mode 100644 Sources/SwiftSDL3/include/module.modulemap
+
+diff --git a/Sources/SwiftSDL3/include/module.modulemap b/Sources/SwiftSDL3/include/module.modulemap
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/Sources/SwiftSDL3/include/module.modulemap
+@@ -0,0 +1,4 @@
++module SwiftSDL3 {
++    header "SDL3/SDL.h"
++    export *
++}
+-- 
+2.39.0
+

@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -36,7 +36,7 @@ static int OutOfMemory(void)
     return -1;
 }
 
-int MINGW32_FORCEALIGN SDL_RunApp(int _argc, char* _argv[], SDL_main_func mainFunction, void * reserved)
+int MINGW32_FORCEALIGN SDL_RunApp(int _argc, char *_argv[], SDL_main_func mainFunction, void * reserved)
 {
     /* Gets the arguments with GetCommandLine, converts them to argc and argv
        and calls SDL_main */

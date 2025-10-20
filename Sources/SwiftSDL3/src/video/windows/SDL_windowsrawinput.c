@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -29,6 +29,8 @@
 #include "SDL_windowsevents.h"
 
 #include "../../joystick/usb_ids.h"
+#include "../../events/SDL_events_c.h"
+#include "../../thread/SDL_systhread.h"
 
 #define ENABLE_RAW_MOUSE_INPUT      0x01
 #define ENABLE_RAW_KEYBOARD_INPUT   0x02
@@ -57,6 +59,8 @@ static DWORD WINAPI WIN_RawInputThread(LPVOID param)
     RAWINPUTDEVICE devices[2];
     HWND window;
     UINT count = 0;
+
+    SDL_SYS_SetupThread("SDLRawInput");
 
     window = CreateWindowEx(0, TEXT("Message"), NULL, 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);
     if (!window) {
@@ -93,18 +97,27 @@ static DWORD WINAPI WIN_RawInputThread(LPVOID param)
     SetEvent(data->ready_event);
 
     while (!data->done) {
-        if (MsgWaitForMultipleObjects(1, &data->done_event, FALSE, INFINITE, QS_RAWINPUT) != (WAIT_OBJECT_0 + 1)) {
+        Uint64 idle_begin = SDL_GetTicksNS();
+        DWORD result = MsgWaitForMultipleObjects(1, &data->done_event, FALSE, INFINITE, QS_RAWINPUT);
+        Uint64 idle_end = SDL_GetTicksNS();
+        if (result != (WAIT_OBJECT_0 + 1)) {
             break;
         }
 
         // Clear the queue status so MsgWaitForMultipleObjects() will wait again
         (void)GetQueueStatus(QS_RAWINPUT);
 
-        WIN_PollRawInput(_this);
+        Uint64 idle_time = idle_end - idle_begin;
+        Uint64 usb_8khz_interval = SDL_US_TO_NS(125);
+        Uint64 poll_start = idle_time < usb_8khz_interval ? _this->internal->last_rawinput_poll : idle_end;
+
+        WIN_PollRawInput(_this, poll_start);
     }
 
     devices[0].dwFlags |= RIDEV_REMOVE;
+    devices[0].hwndTarget = NULL;
     devices[1].dwFlags |= RIDEV_REMOVE;
+    devices[1].hwndTarget = NULL;
     RegisterRawInputDevices(devices, count, sizeof(devices[0]));
 
     DestroyWindow(window);
