@@ -412,6 +412,7 @@ let package = Package(
                 .headerSearchPath("wayland-generated-protocols", .when(platforms: [.linux])),
                 .headerSearchPath("src"),
                 .define("SDL_USE_BUILTIN_OPENGL_DEFINITIONS"),
+                .define("HAVE_SIGTIMEDWAIT", .when(platforms: [.linux])),
             ],
             linkerSettings: [
                 .linkedLibrary(
