@@ -17,6 +17,10 @@ This directory contains custom patches that have been applied to the SDL3 source
    - Critical: Required for Swift Package Manager integration
    - Creates the module.modulemap file that exposes SDL3 C API to Swift
 
+6. **0006-comment-precise-scrolling.patch** - Comment out precise scrolling delta scaling
+   - Comments out the precise scrolling delta scaling code in SDL_cocoamouse.m
+   - Prevents over-scaling of trackpad scroll events
+
 ## How to Apply Patches
 
 After updating the SDL3 source code, apply these patches in order:
@@ -26,7 +30,9 @@ After updating the SDL3 source code, apply these patches in order:
 git apply patches/0001-commit-30c6977.patch
 git apply patches/0002-commit-e32d317.patch
 git apply patches/0003-commit-a56a797.patch
+git apply patches/0004-commit-f20e32b.patch
 git apply patches/0005-add-modulemap.patch
+git apply patches/0006-comment-precise-scrolling.patch
 ```
 
 Or apply them all at once:

@@ -605,10 +605,10 @@ void Cocoa_HandleMouseWheel(SDL_Window *window, NSEvent *event)
         direction = SDL_MOUSEWHEEL_FLIPPED;
     }
 
-    if ([event hasPreciseScrollingDeltas]) {
-        x *= 0.1;
-        y *= 0.1;
-    }
+    // if ([event hasPreciseScrollingDeltas]) {
+    //     x *= 0.1;
+    //     y *= 0.1;
+    // }
 
     SDL_SendMouseWheel(Cocoa_GetEventTimestamp([event timestamp]), window, mouseID, x, y, direction);
 }
