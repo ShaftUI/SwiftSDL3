@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -29,7 +29,68 @@
 #include "../SDL_video_c.h"
 #include "../../events/SDL_mouse_c.h"
 #include "../../joystick/usb_ids.h"
+#include "../../core/windows/SDL_windows.h" // for checking windows version
 
+#pragma pack(push, 1)
+
+#define RIFF_FOURCC(c0, c1, c2, c3)                 \
+    ((DWORD)(BYTE)(c0) | ((DWORD)(BYTE)(c1) << 8) | \
+     ((DWORD)(BYTE)(c2) << 16) | ((DWORD)(BYTE)(c3) << 24))
+
+#define ANI_FLAG_ICON 0x1
+
+typedef struct
+{
+    BYTE bWidth;
+    BYTE bHeight;
+    BYTE bColorCount;
+    BYTE bReserved;
+    WORD xHotspot;
+    WORD yHotspot;
+    DWORD dwDIBSize;
+    DWORD dwDIBOffset;
+} CURSORICONFILEDIRENTRY;
+
+typedef struct
+{
+    WORD idReserved;
+    WORD idType;
+    WORD idCount;
+    CURSORICONFILEDIRENTRY idEntries;
+} CURSORICONFILEDIR;
+
+typedef struct
+{
+    DWORD chunkType; // 'icon'
+    DWORD chunkSize;
+
+    CURSORICONFILEDIR icon_info;
+    BITMAPINFOHEADER bmi_header;
+} ANIMICONINFO;
+
+typedef struct
+{
+    DWORD riffID;
+    DWORD riffSizeof;
+
+    DWORD aconChunkID; // 'ACON'
+    DWORD aniChunkID;  // 'anih'
+    DWORD aniSizeof;   // sizeof(ANIHEADER) = 36 bytes
+    struct
+    {
+        DWORD cbSizeof; // sizeof(ANIHEADER) = 36 bytes.
+        DWORD frames;   // Number of frames in the frame list.
+        DWORD steps;    // Number of steps in the animation loop.
+        DWORD width;    // Width
+        DWORD height;   // Height
+        DWORD bpp;      // bpp
+        DWORD planes;   // Not used
+        DWORD jifRate;  // Default display rate, in jiffies (1/60s)
+        DWORD fl;       // AF_ICON should be set. AF_SEQUENCE is optional
+    } ANIHEADER;
+} RIFFHEADER;
+
+#pragma pack(pop)
 
 typedef struct CachedCursor
 {
@@ -40,16 +101,30 @@ typedef struct CachedCursor
 
 struct SDL_CursorData
 {
-    SDL_Surface *surface;
     int hot_x;
     int hot_y;
+    int num_frames;
     CachedCursor *cache;
     HCURSOR cursor;
+    SDL_CursorFrameInfo frames[1];
 };
+
+typedef struct
+{
+    Uint64 xs[5];
+    Uint64 ys[5];
+    Sint64 residual[2];
+    Uint32 dpiscale;
+    Uint32 dpidenom;
+    int last_node;
+    bool enhanced;
+    bool dpiaware;
+} WIN_MouseData;
 
 DWORD SDL_last_warp_time = 0;
 HCURSOR SDL_cursor = NULL;
 static SDL_Cursor *SDL_blank_cursor = NULL;
+static WIN_MouseData WIN_system_scale_data;
 
 static SDL_Cursor *WIN_CreateCursorAndData(HCURSOR hcursor)
 {
@@ -58,22 +133,21 @@ static SDL_Cursor *WIN_CreateCursorAndData(HCURSOR hcursor)
     }
 
     SDL_Cursor *cursor = (SDL_Cursor *)SDL_calloc(1, sizeof(*cursor));
-    if (cursor) {
-        SDL_CursorData *data = (SDL_CursorData *)SDL_calloc(1, sizeof(*data));
-        if (!data) {
-            SDL_free(cursor);
-            return NULL;
-        }
-        data->cursor = hcursor;
-        cursor->internal = data;
+    if (!cursor) {
+        return NULL;
     }
+
+    SDL_CursorData *data = (SDL_CursorData *)SDL_calloc(1, sizeof(*data));
+    if (!data) {
+        SDL_free(cursor);
+        return NULL;
+    }
+
+    data->cursor = hcursor;
+    cursor->internal = data;
     return cursor;
 }
 
-static SDL_Cursor *WIN_CreateDefaultCursor(void)
-{
-    return WIN_CreateCursorAndData(LoadCursor(NULL, IDC_ARROW));
-}
 
 static bool IsMonochromeSurface(SDL_Surface *surface)
 {
@@ -120,6 +194,9 @@ static HBITMAP CreateColorBitmap(SDL_Surface *surface)
     bitmap = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &pixels, NULL, 0);
     if (!bitmap || !pixels) {
         WIN_SetError("CreateDIBSection()");
+        if (bitmap) {
+            DeleteObject(bitmap);
+        }
         return NULL;
     }
 
@@ -149,6 +226,7 @@ static HBITMAP CreateMaskBitmap(SDL_Surface *surface, bool is_monochrome)
 
     pixels = SDL_small_alloc(Uint8, size * (is_monochrome ? 2 : 1), &isstack);
     if (!pixels) {
+        SDL_OutOfMemory();
         return NULL;
     }
 
@@ -188,33 +266,173 @@ static HBITMAP CreateMaskBitmap(SDL_Surface *surface, bool is_monochrome)
 
 static HCURSOR WIN_CreateHCursor(SDL_Surface *surface, int hot_x, int hot_y)
 {
-    HCURSOR hcursor;
-    ICONINFO ii;
+    HCURSOR hcursor = NULL;
     bool is_monochrome = IsMonochromeSurface(surface);
-
-    SDL_zero(ii);
-    ii.fIcon = FALSE;
-    ii.xHotspot = (DWORD)hot_x;
-    ii.yHotspot = (DWORD)hot_y;
-    ii.hbmMask = CreateMaskBitmap(surface, is_monochrome);
-    ii.hbmColor = is_monochrome ? NULL : CreateColorBitmap(surface);
+    ICONINFO ii = {
+        .fIcon = FALSE,
+        .xHotspot = (DWORD)hot_x,
+        .yHotspot = (DWORD)hot_y,
+        .hbmMask = CreateMaskBitmap(surface, is_monochrome),
+        .hbmColor = is_monochrome ? NULL : CreateColorBitmap(surface)
+    };
 
     if (!ii.hbmMask || (!is_monochrome && !ii.hbmColor)) {
         SDL_SetError("Couldn't create cursor bitmaps");
-        return NULL;
+        goto cleanup;
     }
 
     hcursor = CreateIconIndirect(&ii);
+    if (!hcursor) {
+        WIN_SetError("CreateIconIndirect failed");
+    }
 
-    DeleteObject(ii.hbmMask);
+cleanup:
+    if (ii.hbmMask) {
+        DeleteObject(ii.hbmMask);
+    }
     if (ii.hbmColor) {
         DeleteObject(ii.hbmColor);
     }
 
-    if (!hcursor) {
-        WIN_SetError("CreateIconIndirect()");
+    return hcursor;
+}
+
+/* Windows doesn't have an API to easily create animated cursors from a sequence of images,
+ * so we have to build an animated cursor resource file in memory and load it.
+ */
+static HCURSOR WIN_CreateAnimatedCursorInternal(SDL_CursorFrameInfo *frames, int frame_count, int hot_x, int hot_y, float scale)
+{
+    static const double WIN32_JIFFY = 1000.0 / 60.0;
+    SDL_Surface *surface = NULL;
+    bool use_scaled_surfaces = scale != 1.0f;
+
+    if (use_scaled_surfaces) {
+        surface = SDL_GetSurfaceImage(frames[0].surface, scale);
+    } else {
+        surface = frames[0].surface;
+    }
+    if (!surface) {
         return NULL;
     }
+
+    // Since XP and still as of Win11, Windows cursors have a hard size limit of 256x256.
+    if (surface->w > 256 || surface->h > 256) {
+        SDL_SetError("Cursor images must be <= 256x256");
+        return NULL;
+    }
+
+    const DWORD image_data_size = surface->w * surface->pitch * 2;
+    const DWORD total_image_data_size = image_data_size * frame_count;
+    const DWORD alloc_size = sizeof(RIFFHEADER) + (sizeof(DWORD) * (5 + frame_count)) + (sizeof(ANIMICONINFO) * frame_count) + total_image_data_size;
+    const int w = surface->w;
+    const int h = surface->h;
+
+    hot_x = (int)SDL_round(hot_x * scale);
+    hot_y = (int)SDL_round(hot_y * scale);
+
+    BYTE *membase = SDL_malloc(alloc_size);
+    if (!membase) {
+        return NULL;
+    }
+
+    RIFFHEADER *riff = (RIFFHEADER *)membase;
+    riff->riffID = RIFF_FOURCC('R', 'I', 'F', 'F');
+    riff->riffSizeof = alloc_size - (sizeof(DWORD) * 2); // The total size, minus the RIFF header DWORDs.
+    riff->aconChunkID = RIFF_FOURCC('A', 'C', 'O', 'N');
+    riff->aniChunkID = RIFF_FOURCC('a', 'n', 'i', 'h');
+    riff->aniSizeof = sizeof(riff->ANIHEADER);
+    riff->ANIHEADER.cbSizeof = sizeof(riff->ANIHEADER);
+    riff->ANIHEADER.frames = frame_count;
+    riff->ANIHEADER.steps = frame_count;
+    riff->ANIHEADER.width = w;
+    riff->ANIHEADER.height = h;
+    riff->ANIHEADER.bpp = 32;
+    riff->ANIHEADER.planes = 1;
+    riff->ANIHEADER.jifRate = 1;
+    riff->ANIHEADER.fl = ANI_FLAG_ICON;
+
+    DWORD *dwptr = (DWORD *)(membase + sizeof(*riff));
+
+    // Rate chunk
+    *dwptr++ = RIFF_FOURCC('r', 'a', 't', 'e');
+    *dwptr++ = sizeof(DWORD) * frame_count;
+    for (int i = 0; i < frame_count; ++i) {
+        // Animated Win32 cursors are in jiffy units, and one jiffy is 1/60 of a second.
+        *dwptr++ = frames[i].duration ? SDL_lround(frames[i].duration / WIN32_JIFFY) : 0xFFFFFFFF;
+    }
+
+    // Frame list chunk
+    *dwptr++ = RIFF_FOURCC('L', 'I', 'S', 'T');
+    *dwptr++ = (sizeof(ANIMICONINFO) * frame_count) + total_image_data_size + sizeof(DWORD);
+    *dwptr++ = RIFF_FOURCC('f', 'r', 'a', 'm');
+
+    BYTE *icon_data = (BYTE *)dwptr;
+
+    for (int i = 0; i < frame_count; ++i) {
+        if (!surface) {
+            if (use_scaled_surfaces) {
+                surface = SDL_GetSurfaceImage(frames[i].surface, scale);
+                if (!surface) {
+                    SDL_free(membase);
+                    return NULL;
+                }
+            }
+        } else {
+            surface = frames[i].surface;
+        }
+
+        /* Cursor data is double height (DIB and mask), and has a max width and height of 256 (represented by a value of 0).
+         * https://devblogs.microsoft.com/oldnewthing/20101018-00/?p=12513
+         */
+        ANIMICONINFO *icon_info = (ANIMICONINFO *)icon_data;
+        icon_info->chunkType = RIFF_FOURCC('i', 'c', 'o', 'n');
+        icon_info->chunkSize = sizeof(ANIMICONINFO) + image_data_size - (sizeof(DWORD) * 2);
+        icon_info->icon_info.idReserved = 0;
+        icon_info->icon_info.idType = 2;
+        icon_info->icon_info.idCount = 1;
+        icon_info->icon_info.idEntries.bWidth = w < 256 ? w : 0;  // 0 means a width of 256
+        icon_info->icon_info.idEntries.bHeight = h < 256 ? h : 0; // 0 means a height of 256
+        icon_info->icon_info.idEntries.bColorCount = 0;
+        icon_info->icon_info.idEntries.bReserved = 0;
+        icon_info->icon_info.idEntries.xHotspot = hot_x;
+        icon_info->icon_info.idEntries.yHotspot = hot_y;
+        icon_info->icon_info.idEntries.dwDIBSize = image_data_size;
+        icon_info->icon_info.idEntries.dwDIBOffset = offsetof(ANIMICONINFO, bmi_header) - (sizeof(DWORD) * 2);
+        icon_info->bmi_header.biSize = sizeof(BITMAPINFOHEADER);
+        icon_info->bmi_header.biWidth = w;
+        icon_info->bmi_header.biHeight = h * 2;
+        icon_info->bmi_header.biPlanes = 1;
+        icon_info->bmi_header.biBitCount = 32;
+        icon_info->bmi_header.biCompression = BI_RGB;
+        icon_info->bmi_header.biSizeImage = 0;
+        icon_info->bmi_header.biXPelsPerMeter = 0;
+        icon_info->bmi_header.biYPelsPerMeter = 0;
+        icon_info->bmi_header.biClrUsed = 0;
+        icon_info->bmi_header.biClrImportant = 0;
+
+        icon_data += sizeof(ANIMICONINFO);
+
+        // Cursor DIB images are stored bottom-up and double height: the bitmap, and the mask
+        const Uint8 *pix = frames[i].surface->pixels;
+        pix += (frames[i].surface->h - 1) * frames[i].surface->pitch;
+        for (int j = 0; j < frames[i].surface->h; j++) {
+            SDL_memcpy(icon_data, pix, frames[i].surface->pitch);
+            pix -= frames[i].surface->pitch;
+            icon_data += frames[i].surface->pitch;
+        }
+
+        // Should we generate mask data here?
+        icon_data += (image_data_size / 2);
+
+        if (use_scaled_surfaces) {
+            SDL_DestroySurface(surface);
+        }
+        surface = NULL;
+    }
+
+    HCURSOR hcursor = (HCURSOR)CreateIconFromResource(membase, alloc_size, FALSE, 0x00030000);
+    SDL_free(membase);
+
     return hcursor;
 }
 
@@ -238,8 +456,40 @@ static SDL_Cursor *WIN_CreateCursor(SDL_Surface *surface, int hot_x, int hot_y)
         }
         data->hot_x = hot_x;
         data->hot_y = hot_y;
-        data->surface = surface;
+        data->num_frames = 1;
+        data->frames[0].surface = surface;
         ++surface->refcount;
+        cursor->internal = data;
+    }
+    return cursor;
+}
+
+static SDL_Cursor *WIN_CreateAnimatedCursor(SDL_CursorFrameInfo *frames, int frame_count, int hot_x, int hot_y)
+{
+    if (!SDL_SurfaceHasAlternateImages(frames[0].surface)) {
+        HCURSOR hcursor = WIN_CreateAnimatedCursorInternal(frames, frame_count, hot_x, hot_y, 1.0f);
+        if (!hcursor) {
+            return NULL;
+        }
+        return WIN_CreateCursorAndData(hcursor);
+    }
+
+    // Dynamically generate cursors at the appropriate DPI
+    SDL_Cursor *cursor = (SDL_Cursor *)SDL_calloc(1, sizeof(*cursor));
+    if (cursor) {
+        SDL_CursorData *data = (SDL_CursorData *)SDL_calloc(1, sizeof(*data) + (sizeof(SDL_CursorFrameInfo) * (frame_count - 1)));
+        if (!data) {
+            SDL_free(cursor);
+            return NULL;
+        }
+        data->hot_x = hot_x;
+        data->hot_y = hot_y;
+        data->num_frames = 1;
+        for (int i = 0; i < frame_count; ++i) {
+            data->frames[i].surface = frames[i].surface;
+            data->frames[i].duration = frames[i].duration;
+            ++frames[i].surface->refcount;
+        }
         cursor->internal = data;
     }
     return cursor;
@@ -277,7 +527,7 @@ static SDL_Cursor *WIN_CreateSystemCursor(SDL_SystemCursor id)
         name = IDC_CROSS;
         break;
     case SDL_SYSTEM_CURSOR_PROGRESS:
-        name = IDC_WAIT;
+        name = IDC_APPSTARTING;
         break;
     case SDL_SYSTEM_CURSOR_NWSE_RESIZE:
         name = IDC_SIZENWSE;
@@ -328,17 +578,25 @@ static SDL_Cursor *WIN_CreateSystemCursor(SDL_SystemCursor id)
     return WIN_CreateCursorAndData(LoadCursor(NULL, name));
 }
 
+static SDL_Cursor *WIN_CreateDefaultCursor(void)
+{
+    SDL_SystemCursor id = SDL_GetDefaultSystemCursor();
+    return WIN_CreateSystemCursor(id);
+}
+
 static void WIN_FreeCursor(SDL_Cursor *cursor)
 {
     SDL_CursorData *data = cursor->internal;
 
-    if (data->surface) {
-        SDL_DestroySurface(data->surface);
+    for (int i = 0; i < data->num_frames; ++i) {
+        SDL_DestroySurface(data->frames[i].surface);
     }
     while (data->cache) {
         CachedCursor *entry = data->cache;
         data->cache = entry->next;
-        DestroyCursor(entry->cursor);
+        if (entry->cursor) {
+            DestroyCursor(entry->cursor);
+        }
         SDL_free(entry);
     }
     if (data->cursor) {
@@ -364,21 +622,27 @@ static HCURSOR GetCachedCursor(SDL_Cursor *cursor)
         }
     }
 
-    // Need to create a cursor for this content scale
-    SDL_Surface *surface = NULL;
-    HCURSOR hcursor = NULL;
     CachedCursor *entry = NULL;
+    HCURSOR hcursor = NULL;
 
-    surface = SDL_GetSurfaceImage(data->surface, scale);
-    if (!surface) {
-        goto error;
-    }
+    // Need to create a cursor for this content scale
+    if (data->num_frames == 1) {
+        SDL_Surface *surface = NULL;
 
-    int hot_x = (int)SDL_round(data->hot_x * scale);
-    int hot_y = (int)SDL_round(data->hot_x * scale);
-    hcursor = WIN_CreateHCursor(surface, hot_x, hot_y);
-    if (!hcursor) {
-        goto error;
+        surface = SDL_GetSurfaceImage(data->frames[0].surface, scale);
+        if (!surface) {
+            goto error;
+        }
+
+        int hot_x = (int)SDL_round(data->hot_x * scale);
+        int hot_y = (int)SDL_round(data->hot_y * scale);
+        hcursor = WIN_CreateHCursor(surface, hot_x, hot_y);
+        SDL_DestroySurface(surface);
+        if (!hcursor) {
+            goto error;
+        }
+    } else {
+        hcursor = WIN_CreateAnimatedCursorInternal(data->frames, data->num_frames, data->hot_x, data->hot_y, scale);
     }
 
     entry = (CachedCursor *)SDL_malloc(sizeof(*entry));
@@ -390,14 +654,9 @@ static HCURSOR GetCachedCursor(SDL_Cursor *cursor)
     entry->next = data->cache;
     data->cache = entry;
 
-    SDL_DestroySurface(surface);
-
     return hcursor;
 
 error:
-    if (surface) {
-        SDL_DestroySurface(surface);
-    }
     if (hcursor) {
         DestroyCursor(hcursor);
     }
@@ -408,10 +667,13 @@ error:
 static bool WIN_ShowCursor(SDL_Cursor *cursor)
 {
     if (!cursor) {
-        cursor = SDL_blank_cursor;
+        if (GetSystemMetrics(SM_REMOTESESSION)) {
+            // Use a blank cursor so we continue to get relative motion over RDP
+            cursor = SDL_blank_cursor;
+        }
     }
     if (cursor) {
-        if (cursor->internal->surface) {
+        if (cursor->internal->num_frames) {
             SDL_cursor = GetCachedCursor(cursor);
         } else {
             SDL_cursor = cursor->internal->cursor;
@@ -521,11 +783,101 @@ static SDL_MouseButtonFlags WIN_GetGlobalMouseState(float *x, float *y)
     return result;
 }
 
+static void WIN_ApplySystemScale(void *internal, Uint64 timestamp, SDL_Window *window, SDL_MouseID mouseID, float *x, float *y)
+{
+    if (!internal) {
+        return;
+    }
+    WIN_MouseData *data = (WIN_MouseData *)internal;
+
+    SDL_VideoDisplay *display = window ? SDL_GetVideoDisplayForWindow(window) : SDL_GetVideoDisplay(SDL_GetPrimaryDisplay());
+
+    Sint64 ix = (Sint64)*x * 65536;
+    Sint64 iy = (Sint64)*y * 65536;
+    Uint32 dpi = display ? (Uint32)(display->content_scale * USER_DEFAULT_SCREEN_DPI) : USER_DEFAULT_SCREEN_DPI;
+
+    if (!data->enhanced) { // early return if flat scale
+        dpi = data->dpiscale * (data->dpiaware ? dpi : USER_DEFAULT_SCREEN_DPI);
+        ix *= dpi;
+        iy *= dpi;
+        ix /= USER_DEFAULT_SCREEN_DPI;
+        iy /= USER_DEFAULT_SCREEN_DPI;
+        ix /= 32;
+        iy /= 32;
+        // data->residual[0] += ix;
+        // data->residual[1] += iy;
+        // ix = 65536 * (data->residual[0] / 65536);
+        // iy = 65536 * (data->residual[1] / 65536);
+        // data->residual[0] -= ix;
+        // data->residual[1] -= iy;
+        *x = (float)ix / 65536.0f;
+        *y = (float)iy / 65536.0f;
+        return;
+    }
+
+    Uint64 *xs = data->xs;
+    Uint64 *ys = data->ys;
+    Uint64 absx = SDL_abs(ix);
+    Uint64 absy = SDL_abs(iy);
+    Uint64 speed = SDL_min(absx, absy) + (SDL_max(absx, absy) << 1); // super cursed approximation used by Windows
+    if (speed == 0) {
+        return;
+    }
+
+    int i, j, k;
+    for (i = 1; i < 5; i++) {
+        j = i;
+        if (speed < xs[j]) {
+            break;
+        }
+    }
+    i -= 1;
+    j -= 1;
+    k = data->last_node;
+    data->last_node = j;
+
+    Uint32 denom = data->dpidenom;
+    Sint64 scale = 0;
+    Sint64 xdiff = xs[j+1] - xs[j];
+    Sint64 ydiff = ys[j+1] - ys[j];
+    if (xdiff != 0) {
+        Sint64 slope = ydiff / xdiff;
+        Sint64 inter = slope * xs[i] - ys[i];
+        scale += slope - inter / speed;
+    }
+
+    if (j > k) {
+        denom <<= 1;
+        xdiff = xs[k+1] - xs[k];
+        ydiff = ys[k+1] - ys[k];
+        if (xdiff != 0) {
+            Sint64 slope = ydiff / xdiff;
+            Sint64 inter = slope * xs[k] - ys[k];
+            scale += slope - inter / speed;
+        }
+    }
+
+    scale *= dpi;
+    ix *= scale;
+    iy *= scale;
+    ix /= denom;
+    iy /= denom;
+    // data->residual[0] += ix;
+    // data->residual[1] += iy;
+    // ix = 65536 * (data->residual[0] / 65536);
+    // iy = 65536 * (data->residual[1] / 65536);
+    // data->residual[0] -= ix;
+    // data->residual[1] -= iy;
+    *x = (float)ix / 65536.0f;
+    *y = (float)iy / 65536.0f;
+}
+
 void WIN_InitMouse(SDL_VideoDevice *_this)
 {
     SDL_Mouse *mouse = SDL_GetMouse();
 
     mouse->CreateCursor = WIN_CreateCursor;
+    mouse->CreateAnimatedCursor = WIN_CreateAnimatedCursor;
     mouse->CreateSystemCursor = WIN_CreateSystemCursor;
     mouse->ShowCursor = WIN_ShowCursor;
     mouse->FreeCursor = WIN_FreeCursor;
@@ -534,6 +886,8 @@ void WIN_InitMouse(SDL_VideoDevice *_this)
     mouse->SetRelativeMouseMode = WIN_SetRelativeMouseMode;
     mouse->CaptureMouse = WIN_CaptureMouse;
     mouse->GetGlobalMouseState = WIN_GetGlobalMouseState;
+    mouse->ApplySystemScale = WIN_ApplySystemScale;
+    mouse->system_scale_data = &WIN_system_scale_data;
 
     SDL_SetDefaultCursor(WIN_CreateDefaultCursor());
 
@@ -550,101 +904,68 @@ void WIN_QuitMouse(SDL_VideoDevice *_this)
     }
 }
 
-/* For a great description of how the enhanced mouse curve works, see:
- * https://superuser.com/questions/278362/windows-mouse-acceleration-curve-smoothmousexcurve-and-smoothmouseycurve
- * http://www.esreality.com/?a=post&id=1846538/
- */
-static bool LoadFiveFixedPointFloats(const BYTE *bytes, float *values)
+static void ReadMouseCurve(int v, Uint64 xs[5], Uint64 ys[5])
 {
-    int i;
-
-    for (i = 0; i < 5; ++i) {
-        float fraction = (float)((Uint16)bytes[1] << 8 | bytes[0]) / 65535.0f;
-        float value = (float)(((Uint16)bytes[3] << 8) | bytes[2]) + fraction;
-        *values++ = value;
-        bytes += 8;
-    }
-    return true;
-}
-
-static void WIN_SetEnhancedMouseScale(int mouse_speed)
-{
-    float scale = (float)mouse_speed / 10.0f;
-    HKEY hKey;
-    DWORD dwType = REG_BINARY;
-    BYTE value[40];
-    DWORD length = sizeof(value);
-    int i;
-    float xpoints[5];
-    float ypoints[5];
-    float scale_points[10];
-    const int dpi = USER_DEFAULT_SCREEN_DPI; // FIXME, how do we handle different monitors with different DPI?
-    const float display_factor = 3.5f * (150.0f / dpi);
-
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\Mouse", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        if (RegQueryValueExW(hKey, L"SmoothMouseXCurve", 0, &dwType, value, &length) == ERROR_SUCCESS &&
-            LoadFiveFixedPointFloats(value, xpoints) &&
-            RegQueryValueExW(hKey, L"SmoothMouseYCurve", 0, &dwType, value, &length) == ERROR_SUCCESS &&
-            LoadFiveFixedPointFloats(value, ypoints)) {
-            for (i = 0; i < 5; ++i) {
-                float gain;
-                if (xpoints[i] > 0.0f) {
-                    gain = (ypoints[i] / xpoints[i]) * scale;
-                } else {
-                    gain = 0.0f;
-                }
-                scale_points[i * 2] = xpoints[i];
-                scale_points[i * 2 + 1] = gain / display_factor;
-                // SDL_Log("Point %d = %f,%f\n", i, scale_points[i * 2], scale_points[i * 2 + 1]);
-            }
-            SDL_SetMouseSystemScale(SDL_arraysize(scale_points), scale_points);
-        }
-        RegCloseKey(hKey);
-    }
-}
-
-static void WIN_SetLinearMouseScale(int mouse_speed)
-{
-    static float mouse_speed_scale[] = {
-        0.0f,
-        1 / 32.0f,
-        1 / 16.0f,
-        1 / 8.0f,
-        2 / 8.0f,
-        3 / 8.0f,
-        4 / 8.0f,
-        5 / 8.0f,
-        6 / 8.0f,
-        7 / 8.0f,
-        1.0f,
-        1.25f,
-        1.5f,
-        1.75f,
-        2.0f,
-        2.25f,
-        2.5f,
-        2.75f,
-        3.0f,
-        3.25f,
-        3.5f
+    bool win8 = WIN_IsWindows8OrGreater();
+    DWORD xbuff[10] = {
+        0x00000000, 0,
+        0x00006e15, 0,
+        0x00014000, 0,
+        0x0003dc29, 0,
+        0x00280000, 0
     };
-
-    if (mouse_speed > 0 && mouse_speed < SDL_arraysize(mouse_speed_scale)) {
-        SDL_SetMouseSystemScale(1, &mouse_speed_scale[mouse_speed]);
+    DWORD ybuff[10] = {
+        0x00000000, 0,
+        win8 ? 0x000111fd : 0x00015eb8, 0,
+        win8 ? 0x00042400 : 0x00054ccd, 0,
+        win8 ? 0x0012fc00 : 0x00184ccd, 0,
+        win8 ? 0x01bbc000 : 0x02380000, 0
+    };
+    DWORD xsize = sizeof(xbuff);
+    DWORD ysize = sizeof(ybuff);
+    HKEY open_handle;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\Mouse", 0, KEY_READ, &open_handle) == ERROR_SUCCESS) {
+        RegQueryValueExW(open_handle, L"SmoothMouseXCurve", NULL, NULL, (BYTE*)xbuff, &xsize);
+        RegQueryValueExW(open_handle, L"SmoothMouseYCurve", NULL, NULL, (BYTE*)ybuff, &ysize);
+        RegCloseKey(open_handle);
+    }
+    xs[0] = 0; // first node must always be origin
+    ys[0] = 0; // first node must always be origin
+    int i;
+    for (i = 1; i < 5; i++) {
+        xs[i] = (7 * (Uint64)xbuff[i * 2]);
+        ys[i] = (v * (Uint64)ybuff[i * 2]) << 17;
     }
 }
 
 void WIN_UpdateMouseSystemScale(void)
 {
-    int mouse_speed;
-    int params[3] = { 0, 0, 0 };
+    SDL_Mouse *mouse = SDL_GetMouse();
 
-    if (SystemParametersInfo(SPI_GETMOUSESPEED, 0, &mouse_speed, 0) &&
-        SystemParametersInfo(SPI_GETMOUSE, 0, params, 0)) {
+    if (mouse->ApplySystemScale == WIN_ApplySystemScale) {
+        mouse->system_scale_data = &WIN_system_scale_data;
+    }
+
+    // always reinitialize to valid defaults, whether fetch was successful or not.
+    WIN_MouseData *data = &WIN_system_scale_data;
+    data->residual[0] = 0;
+    data->residual[1] = 0;
+    data->dpiscale = 32;
+    data->dpidenom = (10 * (WIN_IsWindows8OrGreater() ? 120 : 150)) << 16;
+    data->dpiaware = WIN_IsPerMonitorV2DPIAware(SDL_GetVideoDevice());
+    data->enhanced = false;
+
+    int v = 10;
+    if (SystemParametersInfo(SPI_GETMOUSESPEED, 0, &v, 0)) {
+        v = SDL_max(1, SDL_min(v, 20));
+        data->dpiscale = SDL_max(SDL_max(v, (v - 2) * 4), (v - 6) * 8);
+    }
+
+    int params[3];
+    if (SystemParametersInfo(SPI_GETMOUSE, 0, &params, 0)) {
+        data->enhanced = params[2] ? true : false;
         if (params[2]) {
-            WIN_SetEnhancedMouseScale(mouse_speed);
-        } else {
-            WIN_SetLinearMouseScale(mouse_speed);
+            ReadMouseCurve(v, data->xs, data->ys);
         }
     }
 }

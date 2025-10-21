@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -40,7 +40,7 @@ static BOOL OutOfMemory(void)
 /* Gets the arguments with GetCommandLine, converts them to argc and argv
    and calls SDL_main */
 extern "C"
-int SDL_RunApp(int, char**, SDL_main_func mainFunction, void *reserved)
+int SDL_RunApp(int, char **, SDL_main_func mainFunction, void *reserved)
 {
     LPWSTR *argvw;
     char **argv;

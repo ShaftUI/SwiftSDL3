@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -24,6 +24,7 @@
 #define SDL_x11video_h_
 
 #include "../SDL_sysvideo.h"
+#include "../../events/SDL_keymap_c.h"
 
 #include "../../core/linux/SDL_dbus.h"
 #include "../../core/linux/SDL_ime.h"
@@ -89,6 +90,8 @@ struct SDL_VideoData
         Atom _NET_WM_ICON_NAME;
         Atom _NET_WM_ICON;
         Atom _NET_WM_PING;
+        Atom _NET_WM_SYNC_REQUEST;
+        Atom _NET_WM_SYNC_REQUEST_COUNTER;
         Atom _NET_WM_WINDOW_OPACITY;
         Atom _NET_WM_USER_TIME;
         Atom _NET_ACTIVE_WINDOW;
@@ -101,6 +104,7 @@ struct SDL_VideoData
         Atom SDL_SELECTION;
         Atom TARGETS;
         Atom SDL_FORMATS;
+        Atom RESOURCE_MANAGER;
         Atom XdndAware;
         Atom XdndEnter;
         Atom XdndLeave;
@@ -122,7 +126,6 @@ struct SDL_VideoData
         Atom pen_atom_wacom_tool_type;
     } atoms;
 
-    SDL_Scancode key_layout[256];
     bool selection_waiting;
     bool selection_incr_waiting;
 
@@ -135,18 +138,49 @@ struct SDL_VideoData
     Uint32 global_mouse_buttons;
 
     SDL_XInput2DeviceInfo *mouse_device_info;
+    int xinput_master_pointer_device;
     bool xinput_hierarchy_changed;
 
     int xrandr_event_base;
+    struct
+    {
+        bool xkb_enabled;
+        SDL_Scancode key_layout[256];
 
-#ifdef SDL_VIDEO_DRIVER_X11_HAS_XKBLOOKUPKEYSYM
-    XkbDescPtr xkb;
+        union
+        {
+#ifdef SDL_VIDEO_DRIVER_X11_HAS_XKBLIB
+            struct
+            {
+                XkbDescPtr desc_ptr;
+                SDL_Keymap *keymaps[XkbNumKbdGroups];
+                unsigned long last_map_serial;
+                int event;
+                Uint32 current_group;
+            } xkb; // Modern XKB keyboard handling
 #endif
-    int xkb_event;
-    unsigned int xkb_group;
+            struct
+            {
+                KeySym *keysym_map;
+                int keysyms_per_key;
+                int min_keycode;
+                int max_keycode;
+            } core; // Legacy core keyboard handling
+        };
+        Uint32 pressed_modifiers;
+        Uint32 locked_modifiers;
+        SDL_Keymod sdl_pressed_modifiers;
+        SDL_Keymod sdl_physically_pressed_modifiers;
+        SDL_Keymod sdl_locked_modifiers;
 
-    KeyCode filter_code;
-    Time filter_time;
+        // Virtual modifiers looked up by name.
+        Uint32 alt_mask;
+        Uint32 gui_mask;
+        Uint32 level3_mask;
+        Uint32 level5_mask;
+        Uint32 numlock_mask;
+        Uint32 scrolllock_mask;
+    } keyboard;
 
 #ifdef SDL_VIDEO_VULKAN
     // Vulkan variables only valid if _this->vulkan_config.loader_handle is not NULL
@@ -156,7 +190,6 @@ struct SDL_VideoData
 
     // Used to interact with the on-screen keyboard
     bool is_steam_deck;
-    bool steam_keyboard_open;
 
     bool is_xwayland;
 };

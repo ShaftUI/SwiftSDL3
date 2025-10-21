@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -824,7 +824,9 @@ static bool SDL_SYS_ToFFEffect(struct ff_effect *dest, const SDL_HapticEffect *s
             dest->type = FF_FRICTION;
         }
 
-        dest->direction = 0; // Handled by the condition-specifics.
+        if (!SDL_SYS_ToDirection(&dest->direction, &condition->direction)) {
+            return false;
+        }
 
         // Replay
         dest->replay.length = (condition->length == SDL_HAPTIC_INFINITY) ? 0 : CLAMP(condition->length);
@@ -890,7 +892,7 @@ static bool SDL_SYS_ToFFEffect(struct ff_effect *dest, const SDL_HapticEffect *s
 
         // Header
         dest->type = FF_RUMBLE;
-        dest->direction = 0;
+        dest->direction = 0x4000;
 
         // Replay
         dest->replay.length = (leftright->length == SDL_HAPTIC_INFINITY) ? 0 : CLAMP(leftright->length);
@@ -1115,13 +1117,12 @@ bool SDL_SYS_HapticResume(SDL_Haptic *haptic)
  */
 bool SDL_SYS_HapticStopAll(SDL_Haptic *haptic)
 {
-    int i, ret;
+    int i;
 
     // Linux does not support this natively so we have to loop.
     for (i = 0; i < haptic->neffects; i++) {
         if (haptic->effects[i].hweffect != NULL) {
-            ret = SDL_SYS_HapticStopEffect(haptic, &haptic->effects[i]);
-            if (ret < 0) {
+            if (!SDL_SYS_HapticStopEffect(haptic, &haptic->effects[i])) {
                 return SDL_SetError("Haptic: Error while trying to stop all playing effects.");
             }
         }

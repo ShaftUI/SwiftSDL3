@@ -31,7 +31,9 @@ sources += [
 
 // filesystem
 sources += [
-    "src/filesystem/"
+    "src/filesystem/SDL_filesystem.c",
+    "src/filesystem/SDL_filesystem_c.h",
+    "src/filesystem/SDL_sysfilesystem.h",
 ]
 exclude += [
     "src/filesystem/gdk"
@@ -176,11 +178,6 @@ sources += [
     "src/locale/SDL_locale.c"
 ]
 
-// file
-sources += [
-    "src/file/SDL_iostream.c"
-]
-
 // gpu
 sources += [
     "src/gpu/SDL_gpu.c",
@@ -197,13 +194,51 @@ sources += [
     "src/misc/SDL_url.c"
 ]
 
+// io (replaces old file section)
+sources += [
+    "src/io/SDL_asyncio.c",
+    "src/io/SDL_asyncio_c.h",
+    "src/io/SDL_iostream.c",
+    "src/io/SDL_iostream_c.h",
+    "src/io/SDL_sysasyncio.h",
+    "src/io/generic/SDL_asyncio_generic.c",
+]
+
+// dialog
+sources += [
+    "src/dialog/SDL_dialog.c",
+    "src/dialog/SDL_dialog.h",
+]
+
+// tray
+sources += [
+    "src/tray/SDL_tray_utils.c",
+    "src/tray/SDL_tray_utils.h",
+]
+
+// video stb
+sources += [
+    "src/video/SDL_stb.c",
+    "src/video/SDL_stb_c.h",
+]
+
+// haptic hidapi
+sources += [
+    "src/haptic/hidapi/SDL_hidapihaptic.c",
+    "src/haptic/hidapi/SDL_hidapihaptic.h",
+    "src/haptic/hidapi/SDL_hidapihaptic_c.h",
+    "src/haptic/hidapi/SDL_hidapihaptic_lg4ff.c",
+]
+
 #if os(macOS)
     // macOS specific
     sources += [
         "src/filesystem/cocoa",
+        "src/filesystem/posix",
         "src/audio/coreaudio",
         "src/dialog/cocoa",
         "src/haptic/darwin",
+        "src/io/n3ds",
         "src/joystick/apple",
         "src/joystick/darwin",
         "src/loadso/dlopen",
@@ -215,6 +250,7 @@ sources += [
         "src/render/opengles2",
         "src/thread/pthread",
         "src/timer/unix",
+        "src/tray/cocoa",
         "src/video/cocoa",
     ]
     exclude += [
@@ -231,9 +267,11 @@ sources += [
         "src/core/windows",
         "src/dialog/windows",
         "src/filesystem/windows",
+        "src/filesystem/posix",
         "src/gpu/d3d11/",
         "src/gpu/d3d12/",
         "src/haptic/windows",
+        "src/io/windows",
         "src/joystick/gdk/",
         "src/joystick/windows/",
         "src/libm",
@@ -254,6 +292,7 @@ sources += [
         "src/thread/generic/SDL_sysrwlock.c",
         "src/thread/windows",
         "src/timer/windows",
+        "src/tray/windows",
         "src/video/windows",
         // "src/render/direct3d",
     ]
@@ -261,9 +300,13 @@ sources += [
         "src/core/windows/version.rc",
         "src/gpu/d3d11/compile_shaders.bat",
         "src/gpu/d3d12/compile_shaders.bat",
+        "src/gpu/d3d12/D3D_Blit.hlsl",
         "src/gpu/d3d12/compile_shaders_xbox.bat",
         "src/render/direct3d/compile_shaders.bat",
         "src/render/direct3d/D3D9_PixelShader_YUV.hlsl",
+        "src/render/direct3d/D3D9_PixelShader_Palette.hlsli",
+        "src/render/direct3d/D3D9_PixelShader_Palette_Nearest.hlsl",
+        "src/render/direct3d/D3D9_PixelShader_Palette_Linear.hlsl",
         "src/render/direct3d11/compile_shaders.bat",
         "src/render/direct3d11/D3D11_PixelShader_Advanced.hlsl",
         "src/render/direct3d11/D3D11_PixelShader_Colors.hlsl",
@@ -284,6 +327,14 @@ sources += [
         "src/render/vulkan/VULKAN_PixelShader_Advanced.hlsl",
         "src/render/vulkan/VULKAN_PixelShader_Colors.hlsl",
         "src/render/vulkan/VULKAN_PixelShader_Common.hlsli",
+        "src/render/gpu/shaders/texture_rgba.frag.hlsl",
+        "src/render/gpu/shaders/texture_advanced.frag.hlsl",
+        "src/render/gpu/shaders/linepoint.vert.hlsl",
+        "src/render/gpu/shaders/tri_texture.vert.hlsl",
+        "src/render/gpu/shaders/common.frag.hlsli",
+        "src/render/gpu/shaders/tri_color.vert.hlsl",
+        "src/render/gpu/shaders/texture_rgb.frag.hlsl",
+        "src/render/gpu/shaders/color.frag.hlsl",
     ]
 #endif
 
@@ -298,7 +349,9 @@ sources += [
         "src/core/unix",
         "src/dialog/unix",
         "src/filesystem/unix",
+        "src/filesystem/posix",
         "src/haptic/linux",
+        "src/io/io_uring",
         "src/joystick/linux",
         "src/joystick/steam",
         "src/loadso/dlopen",
@@ -311,6 +364,7 @@ sources += [
         "src/render/SDL_d3dmath.c",
         "src/thread/pthread",
         "src/timer/unix",
+        "src/tray/unix",
         "src/video/kmsdrm",
         "src/video/wayland",
         "src/video/x11",
@@ -358,6 +412,7 @@ let package = Package(
                 .headerSearchPath("wayland-generated-protocols", .when(platforms: [.linux])),
                 .headerSearchPath("src"),
                 .define("SDL_USE_BUILTIN_OPENGL_DEFINITIONS"),
+                .define("HAVE_SIGTIMEDWAIT", .when(platforms: [.linux])),
             ],
             linkerSettings: [
                 .linkedLibrary(
@@ -411,23 +466,23 @@ let package = Package(
             ]
         ),
         .systemLibrary(
-            name: "libdecor", 
+            name: "libdecor",
             pkgConfig: "libdecor-0"
         ),
         .systemLibrary(
-            name: "dbus", 
+            name: "dbus",
             pkgConfig: "dbus-1"
         ),
         .systemLibrary(
-            name: "ibus", 
+            name: "ibus",
             pkgConfig: "ibus-1.0"
         ),
         .systemLibrary(
-            name: "libdrm", 
+            name: "libdrm",
             pkgConfig: "libdrm"
         ),
         .executableTarget(
-            name: "Example",
+            name: "SwiftSDL3Example",
             dependencies: [
                 "SwiftSDL3"
             ]

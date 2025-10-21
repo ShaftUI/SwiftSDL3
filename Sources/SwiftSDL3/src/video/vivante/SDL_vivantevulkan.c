@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -117,8 +117,7 @@ void VIVANTE_Vulkan_UnloadLibrary(SDL_VideoDevice *_this)
     }
 }
 
-char const* const* VIVANTE_Vulkan_GetInstanceExtensions(SDL_VideoDevice *_this,
-                                              Uint32 *count)
+char const * const *VIVANTE_Vulkan_GetInstanceExtensions(SDL_VideoDevice *_this, Uint32 *count)
 {
     static const char *const extensionsForVivante[] = {
         VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_DISPLAY_EXTENSION_NAME

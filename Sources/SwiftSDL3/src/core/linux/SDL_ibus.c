@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -563,9 +563,7 @@ bool SDL_IBus_Init(void)
             return false;
         }
 
-        if (ibus_addr_file) {
-            SDL_free(ibus_addr_file);
-        }
+        SDL_free(ibus_addr_file);
         ibus_addr_file = SDL_strdup(addr_file);
 
         if (inotify_fd < 0) {

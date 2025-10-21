@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -324,7 +324,7 @@ void SDL_EVDEV_kbd_set_muted(SDL_EVDEV_keyboard_state *state, bool muted)
 {
 }
 
-void SDL_EVDEV_kbd_set_vt_switch_callbacks(SDL_EVDEV_keyboard_state *state, void (*release_callback)(void*), void *release_callback_data, void (*acquire_callback)(void*), void *acquire_callback_data)
+void SDL_EVDEV_kbd_set_vt_switch_callbacks(SDL_EVDEV_keyboard_state *state, void (*release_callback)(void *), void *release_callback_data, void (*acquire_callback)(void *), void *acquire_callback_data)
 {
 }
 

@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -30,6 +30,8 @@
 @interface SDL_UIKitVideoData : NSObject
 
 @property(nonatomic, assign) id pasteboardObserver;
+
+@property(nonatomic, assign) bool setting_clipboard;
 
 @end
 

@@ -1,0 +1,19 @@
+diff --git a/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoamouse.m b/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoamouse.m
+index 0750c45..c9ba6a1 100644
+--- a/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoamouse.m
++++ b/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoamouse.m
+@@ -605,10 +605,10 @@ void Cocoa_HandleMouseWheel(SDL_Window *window, NSEvent *event)
+         direction = SDL_MOUSEWHEEL_FLIPPED;
+     }
+ 
+-    if ([event hasPreciseScrollingDeltas]) {
+-        x *= 0.1;
+-        y *= 0.1;
+-    }
++    // if ([event hasPreciseScrollingDeltas]) {
++    //     x *= 0.1;
++    //     y *= 0.1;
++    // }
+ 
+     SDL_SendMouseWheel(Cocoa_GetEventTimestamp([event timestamp]), window, mouseID, x, y, direction);
+ }
