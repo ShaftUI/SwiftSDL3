@@ -1,12 +1,12 @@
 diff --git a/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoawindow.m b/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoawindow.m
-index 3425737..df6c350 100644
+index 3425737..eb0a807 100644
 --- a/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoawindow.m
 +++ b/Sources/SwiftSDL3/src/video/cocoa/SDL_cocoawindow.m
-@@ -1703,12 +1703,65 @@ - (BOOL)processHitTest:(NSEvent *)theEvent
+@@ -1703,12 +1703,68 @@ - (BOOL)processHitTest:(NSEvent *)theEvent
      return NO; // not a special area, carry on.
  }
  
-+static void Cocoa_SyncMouseButtonState(SDL_Mouse *mouse, SDL_MouseID mouseID)
++static void Cocoa_SyncMouseButtonState(SDL_Mouse *mouse, SDL_MouseID mouseID, Uint8 excludeButton)
 +{
 +    const NSUInteger actualButtons = [NSEvent pressedMouseButtons];
 +    SDL_MouseInputSource *source = NULL;
@@ -43,8 +43,13 @@ index 3425737..df6c350 100644
 +        actualButtonState |= SDL_BUTTON_X2MASK;
 +    }
 +    
-+    // Sync any buttons that are out of sync
++    // Sync any buttons that are out of sync (except the one being processed)
 +    for (Uint8 button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; ++button) {
++        // Skip the button being processed to avoid duplicate events
++        if (excludeButton != 0 && button == excludeButton) {
++            continue;
++        }
++        
 +        Uint32 buttonMask = SDL_BUTTON_MASK(button);
 +        bool sdlPressed = (sdlButtonState & buttonMask) != 0;
 +        bool actuallyPressed = (actualButtonState & buttonMask) != 0;
@@ -62,10 +67,9 @@ index 3425737..df6c350 100644
      //const int clicks = (int)[theEvent clickCount];
      SDL_Window *focus = SDL_GetKeyboardFocus();
  
-+    // Sync button state with hardware before processing event
-+    Cocoa_SyncMouseButtonState(mouse, mouseID);
++    // Sync button state with hardware before processing event (exclude the button being processed to avoid duplicate events)
++    Cocoa_SyncMouseButtonState(mouse, mouseID, button);
 +
      // macOS will send non-left clicks to background windows without raising them, so we need to
      //  temporarily adjust the mouse position when this happens, as `mouse` will be tracking
      //  the position in the currently-focused window. We don't (currently) send a mousemove
-
