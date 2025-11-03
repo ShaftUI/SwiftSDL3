@@ -1703,7 +1703,7 @@ static NSCursor *Cocoa_GetDesiredCursor(void)
     return NO; // not a special area, carry on.
 }
 
-static void Cocoa_SyncMouseButtonState(SDL_Mouse *mouse, SDL_MouseID mouseID, Uint8 excludeButton)
+static void Cocoa_SyncMouseButtonState(SDL_Mouse *mouse, SDL_MouseID mouseID, Uint8 excludeButton, bool excludeButtonState)
 {
     const NSUInteger actualButtons = [NSEvent pressedMouseButtons];
     SDL_MouseInputSource *source = NULL;
@@ -1740,16 +1740,22 @@ static void Cocoa_SyncMouseButtonState(SDL_Mouse *mouse, SDL_MouseID mouseID, Ui
         actualButtonState |= SDL_BUTTON_X2MASK;
     }
     
-    // Sync any buttons that are out of sync (except the one being processed)
+    // Sync any buttons that are out of sync
     for (Uint8 button = SDL_BUTTON_LEFT; button <= SDL_BUTTON_X2; ++button) {
-        // Skip the button being processed to avoid duplicate events
-        if (excludeButton != 0 && button == excludeButton) {
-            continue;
-        }
-        
         Uint32 buttonMask = SDL_BUTTON_MASK(button);
         bool sdlPressed = (sdlButtonState & buttonMask) != 0;
         bool actuallyPressed = (actualButtonState & buttonMask) != 0;
+        
+        if (excludeButton != 0 && button == excludeButton) {
+            // For the button being processed, check if SDL state matches the upcoming event state
+            // If not, we need to send the opposite event first to sync (e.g., if processing DOWN
+            // but SDL thinks it's already DOWN, send UP first)
+            if (sdlPressed != excludeButtonState) {
+                // Send synthetic event to sync to opposite state before the actual event
+                SDL_SendMouseButton(0, mouse->focus, mouseID, button, !excludeButtonState);
+            }
+            continue; // The actual event will be processed after this sync
+        }
         
         if (sdlPressed != actuallyPressed) {
             // Send synthetic event to sync state
@@ -1765,7 +1771,7 @@ static void Cocoa_SendMouseButtonClicks(SDL_Mouse *mouse, NSEvent *theEvent, SDL
     SDL_Window *focus = SDL_GetKeyboardFocus();
 
     // Sync button state with hardware before processing event (exclude the button being processed to avoid duplicate events)
-    Cocoa_SyncMouseButtonState(mouse, mouseID, button);
+    Cocoa_SyncMouseButtonState(mouse, mouseID, button, down);
 
     // macOS will send non-left clicks to background windows without raising them, so we need to
     //  temporarily adjust the mouse position when this happens, as `mouse` will be tracking
