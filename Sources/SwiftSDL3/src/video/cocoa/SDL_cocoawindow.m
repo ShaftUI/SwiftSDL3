@@ -1703,6 +1703,56 @@ static NSCursor *Cocoa_GetDesiredCursor(void)
     return NO; // not a special area, carry on.
 }
 
+static void Cocoa_SyncMouseButtonState(SDL_Mouse *mouse, SDL_MouseID mouseID)
+{
+    const NSUInteger actualButtons = [NSEvent pressedMouseButtons];
+    Uint32 actualButtonState = 0;
+    Uint32 sdlButtonState = 0;
+    
+    // Convert NSEvent button mask to SDL button mask
+    if (actualButtons & (1 << 0)) {
+        actualButtonState |= SDL_BUTTON_LMASK;
+    }
+    if (actualButtons & (1 << 1)) {
+        actualButtonState |= SDL_BUTTON_RMASK;
+    }
+    if (actualButtons & (1 << 2)) {
+        actualButtonState |= SDL_BUTTON_MMASK;
+    }
+    if (actualButtons & (1 << 3)) {
+        actualButtonState |= SDL_BUTTON_X1MASK;
+    }
+    if (actualButtons & (1 << 4)) {
+        actualButtonState |= SDL_BUTTON_X2MASK;
+    }
+    
+    // Get SDL's tracked button state
+    for (int i = 0; i < mouse->num_sources; ++i) {
+        if (mouseID == SDL_GLOBAL_MOUSE_ID || mouseID == SDL_TOUCH_MOUSEID) {
+            if (mouse->sources[i].mouseID != SDL_TOUCH_MOUSEID) {
+                sdlButtonState |= mouse->sources[i].buttonstate;
+            }
+        } else {
+            if (mouseID == mouse->sources[i].mouseID) {
+                sdlButtonState = mouse->sources[i].buttonstate;
+                break;
+            }
+        }
+    }
+    
+    // Sync any buttons that are out of sync
+    for (Uint8 btn = SDL_BUTTON_LEFT; btn <= SDL_BUTTON_X2; ++btn) {
+        Uint32 buttonMask = SDL_BUTTON_MASK(btn);
+        bool sdlPressed = (sdlButtonState & buttonMask) != 0;
+        bool actuallyPressed = (actualButtonState & buttonMask) != 0;
+        
+        if (sdlPressed != actuallyPressed) {
+            // Send synthetic event to sync state
+            SDL_SendMouseButton(0, mouse->focus, mouseID, btn, actuallyPressed);
+        }
+    }
+}
+
 static void Cocoa_SendMouseButtonClicks(SDL_Mouse *mouse, NSEvent *theEvent, SDL_Window *window, Uint8 button, bool down)
 {
     SDL_MouseID mouseID = SDL_DEFAULT_MOUSE_ID;
@@ -1918,6 +1968,9 @@ static void Cocoa_SendMouseButtonClicks(SDL_Mouse *mouse, NSEvent *theEvent, SDL
             CGAssociateMouseAndMouseCursorPosition(YES);
         }
     }
+
+    // Sync button state with hardware before sending motion event
+    Cocoa_SyncMouseButtonState(mouse, mouseID);
 
     SDL_SendMouseMotion(Cocoa_GetEventTimestamp([theEvent timestamp]), window, mouseID, false, x, y);
 }
