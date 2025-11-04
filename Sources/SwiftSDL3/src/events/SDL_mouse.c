@@ -1003,10 +1003,10 @@ static void SDL_PrivateSendMouseButton(Uint64 timestamp, SDL_Window *window,
     SDL_UpdateMouseFocus(window, mouse->x, mouse->y, buttonstate, true);
   }
 
-  // if (buttonstate == source->buttonstate) {
-  //     // Ignore this event, no state change
-  //     return;
-  // }
+  if (buttonstate == source->buttonstate) {
+    // Ignore this event, no state change
+    return;
+  }
   source->buttonstate = buttonstate;
 
   if (clicks < 0) {
