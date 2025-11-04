@@ -21,10 +21,10 @@ This directory contains custom patches that have been applied to the SDL3 source
    - Comments out the precise scrolling delta scaling code in SDL_cocoamouse.m
    - Prevents over-scaling of trackpad scroll events
 
-7. **0007-sync-mouse-button-state.patch** - Sync mouse button state with hardware
-   - Adds Cocoa_SyncMouseButtonState function to synchronize SDL button state with macOS hardware state
-   - Ensures event.motion.state accurately reflects actual button presses
-   - Calls sync before processing mouse button events to maintain consistency
+7. **0008-allow-duplicate-button-events.patch** - Allow duplicate button events
+   - Comments out the early return check in SDL_PrivateSendMouseButton that ignores events when button state hasn't changed
+   - Allows duplicate button events to be processed, which is necessary for proper state synchronization
+   - Enables state sync to work correctly when sending synthetic button events
 
 ## How to Apply Patches
 
@@ -38,7 +38,7 @@ git apply patches/0003-commit-a56a797.patch
 git apply patches/0004-commit-f20e32b.patch
 git apply patches/0005-add-modulemap.patch
 git apply patches/0006-comment-precise-scrolling.patch
-git apply patches/0007-sync-mouse-button-state.patch
+git apply patches/0008-allow-duplicate-button-events.patch
 ```
 
 Or apply them all at once:
